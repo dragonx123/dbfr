@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,9 +29,25 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Upload APK (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
           name: jarvis-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      # Workflow artifacts are hosted on Azure Blob Storage, which some
+      # network policies block. A GitHub Release asset is served from
+      # github.com / the githubusercontent CDN instead, so publish one too
+      # as a reliably-downloadable copy of each build.
+      - name: Publish APK as a release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-build-${{ github.run_number }}
+          name: Jarvis debug APK (build ${{ github.run_number }})
+          body: |
+            Automated debug build from commit ${{ github.sha }} on `${{ github.ref_name }}`.
+          prerelease: true
+          files: app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
