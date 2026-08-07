@@ -1,0 +1,66 @@
+# ============================================================================
+# Jarvis configuration
+# ============================================================================
+# Everything here runs 100% locally on your PC — no cloud APIs, no API keys,
+# no data leaving your machine. Tuned defaults below assume an RTX 4070
+# SUPER (12 GB VRAM), but every field is adjustable.
+
+llm:
+  provider: ollama
+  host: http://127.0.0.1:11434
+  # Default model: fast, ~5 GB VRAM, reliable Ollama tool-calling support.
+  # Leaves plenty of headroom to run faster-whisper on the GPU at the same time.
+  model: llama3.1:8b-instruct-q4_K_M
+  # Want more brainpower and don't mind ~9GB VRAM? Try:
+  #   qwen2.5:14b-instruct-q4_K_M   (best quality/VRAM tradeoff on 12GB)
+  #   mistral-nemo:12b-instruct-2407-q4_K_M
+  temperature: 0.6
+  num_ctx: 8192          # context window (tokens)
+  keep_alive: "30m"      # how long Ollama keeps the model loaded in VRAM
+
+stt:
+  engine: faster-whisper
+  # tiny/base/small/medium/large-v3 (or the .en variants for English-only,
+  # which are faster and more accurate for English speech)
+  model: medium.en
+  device: cuda            # "cuda" to use the 4070S, "cpu" as a fallback
+  compute_type: float16   # good speed/accuracy tradeoff on Ada Lovelace
+  language: en
+  sample_rate: 16000
+
+tts:
+  engine: piper
+  # Voice model files (.onnx + .onnx.json) are downloaded by
+  # scripts/setup_*.{sh,ps1} into jarvis/models/piper/
+  voice: en_US-lessac-medium
+  speaking_rate: 1.0
+
+wake:
+  # push_to_talk: press ENTER in the terminal to start/stop recording.
+  #   Zero permissions needed, works everywhere — the recommended default.
+  # hotkey: global hotkey (needs the `keyboard` package; may need
+  #   Administrator/root on some OSes to capture keys system-wide).
+  mode: push_to_talk
+  hotkey: "ctrl+space"
+
+memory:
+  enabled: true
+  db_path: jarvis/memory/jarvis_history.db
+  max_turns_in_context: 20   # most recent turns replayed into the LLM context
+
+persona:
+  name: Jarvis
+  system_prompt_file: prompts/system_prompt.txt
+
+tools:
+  enable_web_search: true
+  enable_weather: true
+  enable_system_control: true    # open apps, volume, screenshot
+  enable_shell: false            # OFF by default — arbitrary shell execution is risky
+  shell_allowlist: []            # if enable_shell is true, only these commands may run
+  app_aliases:
+    # Add your own — name the model can say -> path/command to launch
+    browser: "xdg-open http://google.com"     # Linux example
+    # notepad: "notepad.exe"                  # Windows example
+    # chrome: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    # safari: "open -a Safari"                # macOS example
