@@ -26,25 +26,27 @@ somewhere), call the matching tool instead of just describing what to do.
 """
 
 /**
- * Thin coroutine-friendly wrapper around the LiteRT-LM [Engine] / [Conversation]
- * pair that runs the on-device model and exposes streaming text replies.
+ * [ChatBackend] that runs an LLM entirely on-device via LiteRT-LM, with
+ * device-control tool calling ([JarvisTools]) enabled.
  *
  * https://github.com/google-ai-edge/LiteRT-LM
  */
-class JarvisEngine(private val appContext: Context) {
+class LiteRtChatBackend(
+    private val appContext: Context,
+    private val modelPath: String,
+    private val cacheDir: String,
+    private val useGpu: Boolean = false,
+) : ChatBackend {
 
     private var engine: Engine? = null
     private var conversation: Conversation? = null
 
-    val isReady: Boolean
-        get() = conversation != null
-
     /**
-     * Loads [modelPath] into memory. This can take several seconds, so callers
+     * Loads the model into memory. This can take several seconds, so callers
      * must invoke it off the main thread (this function already hops to
      * [Dispatchers.IO] internally).
      */
-    suspend fun initialize(modelPath: String, cacheDir: String, useGpu: Boolean = false) {
+    override suspend fun initialize() {
         withContext(Dispatchers.IO) {
             close()
 
@@ -73,12 +75,12 @@ class JarvisEngine(private val appContext: Context) {
      * calls (device control) are executed automatically by the engine before
      * the final answer is streamed back.
      */
-    fun sendMessageStream(userText: String): Flow<String> {
-        val activeConversation = conversation ?: error("JarvisEngine.initialize() must complete first")
+    override fun sendMessageStream(userText: String): Flow<String> {
+        val activeConversation = conversation ?: error("LiteRtChatBackend.initialize() must complete first")
         return activeConversation.sendMessageAsync(userText).map { it.toString() }
     }
 
-    fun close() {
+    override fun close() {
         conversation?.close()
         conversation = null
         engine?.close()

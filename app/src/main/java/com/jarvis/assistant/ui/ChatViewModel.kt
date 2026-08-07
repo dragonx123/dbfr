@@ -5,7 +5,11 @@ import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.jarvis.assistant.ai.JarvisEngine
+import com.jarvis.assistant.ai.ChatBackend
+import com.jarvis.assistant.ai.LiteRtChatBackend
+import com.jarvis.assistant.ai.OllamaChatBackend
+import com.jarvis.assistant.model.BackendSettings
+import com.jarvis.assistant.model.BackendType
 import com.jarvis.assistant.model.ChatMessage
 import com.jarvis.assistant.model.ModelRepository
 import com.jarvis.assistant.model.Sender
@@ -30,15 +34,26 @@ sealed interface ModelState {
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val modelRepository = ModelRepository(application)
-    private val engine = JarvisEngine(application)
+    private val backendSettings = BackendSettings(application)
     private val speechToText = SpeechToText(application)
     private val tts = TextToSpeechManager(application)
+
+    private var backend: ChatBackend? = null
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
     private val _modelState = MutableStateFlow<ModelState>(ModelState.NotSetUp)
     val modelState: StateFlow<ModelState> = _modelState.asStateFlow()
+
+    private val _backendType = MutableStateFlow(backendSettings.backendType)
+    val backendType: StateFlow<BackendType> = _backendType.asStateFlow()
+
+    private val _ollamaBaseUrl = MutableStateFlow(backendSettings.ollamaBaseUrl)
+    val ollamaBaseUrl: StateFlow<String> = _ollamaBaseUrl.asStateFlow()
+
+    private val _ollamaModel = MutableStateFlow(backendSettings.ollamaModel)
+    val ollamaModel: StateFlow<String> = _ollamaModel.asStateFlow()
 
     private val _isListening = MutableStateFlow(false)
     val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
@@ -57,10 +72,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         tts.setOnSpeakingChanged { _isSpeaking.value = it }
-
-        if (modelRepository.hasModel()) {
-            loadModel()
-        }
+        initializeBackend()
 
         viewModelScope.launch {
             WakeWordEvents.events.collect { command ->
@@ -73,38 +85,73 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Persists a new backend configuration and (re)connects to it. Called from the Settings screen. */
+    fun updateBackendSettings(type: BackendType, ollamaBaseUrl: String, ollamaModel: String) {
+        backendSettings.backendType = type
+        backendSettings.ollamaBaseUrl = ollamaBaseUrl
+        backendSettings.ollamaModel = ollamaModel
+        _backendType.value = type
+        _ollamaBaseUrl.value = backendSettings.ollamaBaseUrl
+        _ollamaModel.value = backendSettings.ollamaModel
+        initializeBackend()
+    }
+
+    private fun initializeBackend() {
+        backend?.close()
+        backend = null
+
+        when (backendSettings.backendType) {
+            BackendType.ON_DEVICE -> {
+                if (!modelRepository.hasModel()) {
+                    _modelState.value = ModelState.NotSetUp
+                    return
+                }
+                val path = modelRepository.currentModelPath()!!
+                connectBackend(
+                    LiteRtChatBackend(getApplication(), path, modelRepository.engineCacheDir())
+                )
+            }
+            BackendType.OLLAMA -> {
+                val url = backendSettings.ollamaBaseUrl
+                val model = backendSettings.ollamaModel
+                if (url.isBlank() || model.isBlank()) {
+                    _modelState.value = ModelState.NotSetUp
+                    return
+                }
+                connectBackend(OllamaChatBackend(url, model))
+            }
+        }
+    }
+
+    private fun connectBackend(newBackend: ChatBackend) {
+        viewModelScope.launch {
+            _modelState.value = ModelState.Loading
+            runCatching {
+                newBackend.initialize()
+            }.onSuccess {
+                backend = newBackend
+                _modelState.value = ModelState.Ready
+                postMessage(Sender.SYSTEM, "Jarvis is ready. Ask me anything, or tell me to do something on your phone.")
+            }.onFailure {
+                _modelState.value = ModelState.Error(it.message ?: "Failed to connect")
+            }
+        }
+    }
+
     fun importModel(uri: Uri) {
         viewModelScope.launch {
             _modelState.value = ModelState.Importing(0)
             val result = modelRepository.importModel(uri) { bytes ->
                 _modelState.value = ModelState.Importing(bytes)
             }
-            result.onSuccess { loadModel() }
+            result.onSuccess { initializeBackend() }
                 .onFailure { _modelState.value = ModelState.Error(it.message ?: "Import failed") }
         }
     }
 
-    private fun loadModel() {
-        viewModelScope.launch {
-            _modelState.value = ModelState.Loading
-            val path = modelRepository.currentModelPath()
-            if (path == null) {
-                _modelState.value = ModelState.NotSetUp
-                return@launch
-            }
-            runCatching {
-                engine.initialize(path, modelRepository.engineCacheDir())
-            }.onSuccess {
-                _modelState.value = ModelState.Ready
-                postMessage(Sender.SYSTEM, "Jarvis is ready. Ask me anything, or tell me to do something on your phone.")
-            }.onFailure {
-                _modelState.value = ModelState.Error(it.message ?: "Failed to load model")
-            }
-        }
-    }
-
     fun sendMessage(text: String) {
-        if (text.isBlank() || _modelState.value !is ModelState.Ready) return
+        val activeBackend = backend
+        if (text.isBlank() || activeBackend == null || _modelState.value !is ModelState.Ready) return
 
         postMessage(Sender.USER, text)
         val replyId = UUID.randomUUID().toString()
@@ -114,7 +161,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _isGenerating.value = true
             val builder = StringBuilder()
             runCatching {
-                engine.sendMessageStream(text).collect { chunk ->
+                activeBackend.sendMessageStream(text).collect { chunk ->
                     builder.append(chunk)
                     updateMessage(replyId, builder.toString(), isStreaming = true)
                 }
@@ -170,6 +217,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
         speechToText.stopListening()
         tts.shutdown()
-        engine.close()
+        backend?.close()
     }
 }

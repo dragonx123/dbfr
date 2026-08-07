@@ -72,6 +72,9 @@ dependencies {
     // https://github.com/google-ai-edge/LiteRT-LM
     implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
 
+    // -- Ollama backend (remote/LAN server chat, see OllamaChatBackend.kt) --
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     // -- Coroutines --
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 

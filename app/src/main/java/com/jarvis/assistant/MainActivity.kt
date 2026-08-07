@@ -10,9 +10,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.jarvis.assistant.ui.ChatScreen
 import com.jarvis.assistant.ui.ChatViewModel
+import com.jarvis.assistant.ui.SettingsScreen
 import com.jarvis.assistant.ui.theme.JarvisTheme
 
 class MainActivity : ComponentActivity() {
@@ -33,31 +37,48 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             JarvisTheme {
+                var showSettings by remember { mutableStateOf(false) }
+
                 val modelState by viewModel.modelState.collectAsState()
+                val backendType by viewModel.backendType.collectAsState()
+                val ollamaBaseUrl by viewModel.ollamaBaseUrl.collectAsState()
+                val ollamaModel by viewModel.ollamaModel.collectAsState()
                 val messages by viewModel.messages.collectAsState()
                 val isListening by viewModel.isListening.collectAsState()
                 val isGenerating by viewModel.isGenerating.collectAsState()
                 val ttsEnabled by viewModel.ttsEnabled.collectAsState()
                 val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsState()
 
-                ChatScreen(
-                    modelState = modelState,
-                    messages = messages,
-                    isListening = isListening,
-                    isGenerating = isGenerating,
-                    ttsEnabled = ttsEnabled,
-                    wakeWordEnabled = wakeWordEnabled,
-                    onSend = viewModel::sendMessage,
-                    onMicClick = {
-                        if (isListening) viewModel.stopVoiceInput() else viewModel.startVoiceInput()
-                    },
-                    onToggleTts = viewModel::toggleTts,
-                    onToggleWakeWord = { enabled ->
-                        if (enabled) requestRuntimePermissions()
-                        viewModel.setWakeWordEnabled(enabled)
-                    },
-                    onPickModel = { pickModelFile.launch(arrayOf("*/*")) },
-                )
+                if (showSettings) {
+                    SettingsScreen(
+                        currentBackendType = backendType,
+                        currentOllamaUrl = ollamaBaseUrl,
+                        currentOllamaModel = ollamaModel,
+                        onSave = viewModel::updateBackendSettings,
+                        onBack = { showSettings = false },
+                    )
+                } else {
+                    ChatScreen(
+                        modelState = modelState,
+                        backendType = backendType,
+                        messages = messages,
+                        isListening = isListening,
+                        isGenerating = isGenerating,
+                        ttsEnabled = ttsEnabled,
+                        wakeWordEnabled = wakeWordEnabled,
+                        onSend = viewModel::sendMessage,
+                        onMicClick = {
+                            if (isListening) viewModel.stopVoiceInput() else viewModel.startVoiceInput()
+                        },
+                        onToggleTts = viewModel::toggleTts,
+                        onToggleWakeWord = { enabled ->
+                            if (enabled) requestRuntimePermissions()
+                            viewModel.setWakeWordEnabled(enabled)
+                        },
+                        onPickModel = { pickModelFile.launch(arrayOf("*/*")) },
+                        onOpenSettings = { showSettings = true },
+                    )
+                }
             }
         }
     }

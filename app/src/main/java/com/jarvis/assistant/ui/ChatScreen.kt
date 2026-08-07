@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SettingsVoice
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -45,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.jarvis.assistant.model.BackendType
 import com.jarvis.assistant.model.ChatMessage
 import com.jarvis.assistant.model.Sender
 
@@ -52,6 +54,7 @@ import com.jarvis.assistant.model.Sender
 @Composable
 fun ChatScreen(
     modelState: ModelState,
+    backendType: BackendType,
     messages: List<ChatMessage>,
     isListening: Boolean,
     isGenerating: Boolean,
@@ -62,6 +65,7 @@ fun ChatScreen(
     onToggleTts: () -> Unit,
     onToggleWakeWord: (Boolean) -> Unit,
     onPickModel: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -81,6 +85,9 @@ fun ChatScreen(
                             contentDescription = "Toggle spoken replies",
                         )
                     }
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -90,10 +97,12 @@ fun ChatScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             when (modelState) {
-                is ModelState.NotSetUp -> ModelSetupPrompt(onPickModel)
+                is ModelState.NotSetUp -> ModelSetupPrompt(backendType, onPickModel, onOpenSettings)
                 is ModelState.Importing -> ModelProgress("Importing model… ${modelState.bytesCopied / (1024 * 1024)} MB")
-                is ModelState.Loading -> ModelProgress("Loading model into memory…")
-                is ModelState.Error -> ModelSetupPrompt(onPickModel, error = modelState.message)
+                is ModelState.Loading -> ModelProgress(
+                    if (backendType == BackendType.OLLAMA) "Connecting to Ollama…" else "Loading model into memory…"
+                )
+                is ModelState.Error -> ModelSetupPrompt(backendType, onPickModel, onOpenSettings, error = modelState.message)
                 is ModelState.Ready -> {
                     MessageList(messages, Modifier.weight(1f))
                     InputBar(
@@ -109,28 +118,52 @@ fun ChatScreen(
 }
 
 @Composable
-private fun ModelSetupPrompt(onPickModel: () -> Unit, error: String? = null) {
+private fun ModelSetupPrompt(
+    backendType: BackendType,
+    onPickModel: () -> Unit,
+    onOpenSettings: () -> Unit,
+    error: String? = null,
+) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("No model loaded", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Jarvis runs a language model entirely on this phone. Download a " +
-                ".litertlm file (e.g. Gemma3-1B-IT from huggingface.co/litert-community) " +
-                "and import it below.",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (error != null) {
+        if (backendType == BackendType.OLLAMA) {
+            Text("Ollama not configured", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
-            Text(error, color = MaterialTheme.colorScheme.error)
-        }
-        Spacer(Modifier.height(16.dp))
-        androidx.compose.material3.Button(onClick = onPickModel) {
-            Text("Choose model file")
+            Text(
+                "Jarvis is set to use an Ollama server but doesn't have a server URL " +
+                    "and model set yet. Open Settings to configure it.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (error != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(error, color = MaterialTheme.colorScheme.error)
+            }
+            Spacer(Modifier.height(16.dp))
+            androidx.compose.material3.Button(onClick = onOpenSettings) {
+                Text("Open Settings")
+            }
+        } else {
+            Text("No model loaded", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Jarvis runs a language model entirely on this phone. Download a " +
+                    ".litertlm file (e.g. Gemma3-1B-IT from huggingface.co/litert-community) " +
+                    "and import it below.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (error != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(error, color = MaterialTheme.colorScheme.error)
+            }
+            Spacer(Modifier.height(16.dp))
+            androidx.compose.material3.Button(onClick = onPickModel) {
+                Text("Choose model file")
+            }
         }
     }
 }
