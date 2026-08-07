@@ -18,10 +18,6 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-private const val SYSTEM_INSTRUCTION =
-    "You are Jarvis, a concise, helpful voice assistant. Keep replies short " +
-        "and natural unless the user asks for detail."
-
 /**
  * [ChatBackend] that talks to a remote/LAN [Ollama](https://ollama.com)
  * server instead of running inference on-device. Trades "fully offline" for
@@ -37,6 +33,7 @@ private const val SYSTEM_INSTRUCTION =
 class OllamaChatBackend(
     private val baseUrl: String,
     private val model: String,
+    private val personaSystemInstruction: String,
 ) : ChatBackend {
 
     private val client = OkHttpClient.Builder()
@@ -48,7 +45,7 @@ class OllamaChatBackend(
 
     override suspend fun initialize() {
         history.clear()
-        history += message("system", SYSTEM_INSTRUCTION)
+        history += message("system", personaSystemInstruction)
     }
 
     override fun sendMessageStream(userText: String): Flow<String> = callbackFlow {

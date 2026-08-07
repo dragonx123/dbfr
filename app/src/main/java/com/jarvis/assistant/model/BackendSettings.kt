@@ -26,10 +26,16 @@ class BackendSettings(context: Context) {
         get() = prefs.getString(KEY_OLLAMA_MODEL, "") ?: ""
         set(value) = prefs.edit().putString(KEY_OLLAMA_MODEL, value.trim()).apply()
 
+    /** Which [Persona] (name, voice gender, personality) is currently selected. */
+    var persona: Persona
+        get() = Personas.byId(prefs.getString(KEY_PERSONA_ID, Personas.JARVIS.id) ?: Personas.JARVIS.id)
+        set(value) = prefs.edit().putString(KEY_PERSONA_ID, value.id).apply()
+
     companion object {
         private const val PREFS_NAME = "jarvis_backend_settings"
         private const val KEY_BACKEND_TYPE = "backend_type"
         private const val KEY_OLLAMA_URL = "ollama_base_url"
         private const val KEY_OLLAMA_MODEL = "ollama_model"
+        private const val KEY_PERSONA_ID = "persona_id"
     }
 }

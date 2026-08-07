@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
                 val backendType by viewModel.backendType.collectAsState()
                 val ollamaBaseUrl by viewModel.ollamaBaseUrl.collectAsState()
                 val ollamaModel by viewModel.ollamaModel.collectAsState()
+                val persona by viewModel.persona.collectAsState()
                 val messages by viewModel.messages.collectAsState()
                 val isListening by viewModel.isListening.collectAsState()
                 val isGenerating by viewModel.isGenerating.collectAsState()
@@ -54,13 +55,16 @@ class MainActivity : ComponentActivity() {
                         currentBackendType = backendType,
                         currentOllamaUrl = ollamaBaseUrl,
                         currentOllamaModel = ollamaModel,
-                        onSave = viewModel::updateBackendSettings,
+                        currentPersona = persona,
+                        onSave = viewModel::updateSettings,
+                        onPreviewVoice = viewModel::previewVoice,
                         onBack = { showSettings = false },
                     )
                 } else {
                     ChatScreen(
                         modelState = modelState,
                         backendType = backendType,
+                        personaName = persona.displayName,
                         messages = messages,
                         isListening = isListening,
                         isGenerating = isGenerating,

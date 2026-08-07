@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -23,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -36,6 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.jarvis.assistant.ai.OllamaChatBackend
 import com.jarvis.assistant.model.BackendType
+import com.jarvis.assistant.model.Persona
+import com.jarvis.assistant.model.Personas
+import com.jarvis.assistant.model.VoiceGender
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,12 +50,15 @@ fun SettingsScreen(
     currentBackendType: BackendType,
     currentOllamaUrl: String,
     currentOllamaModel: String,
-    onSave: (BackendType, String, String) -> Unit,
+    currentPersona: Persona,
+    onSave: (BackendType, String, String, Persona) -> Unit,
+    onPreviewVoice: (Persona) -> Unit,
     onBack: () -> Unit,
 ) {
     var selectedType by remember { mutableStateOf(currentBackendType) }
     var ollamaUrl by remember { mutableStateOf(currentOllamaUrl.ifBlank { "http://" }) }
     var ollamaModel by remember { mutableStateOf(currentOllamaModel) }
+    var selectedPersona by remember { mutableStateOf(currentPersona) }
 
     var availableModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var isFetchingModels by remember { mutableStateOf(false) }
@@ -74,6 +83,25 @@ fun SettingsScreen(
                 .padding(padding)
                 .padding(20.dp),
         ) {
+            Text("Assistant voice", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Pick a name and voice for your assistant.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            Personas.all.forEach { persona ->
+                PersonaOption(
+                    persona = persona,
+                    selected = selectedPersona.id == persona.id,
+                    onSelect = { selectedPersona = persona },
+                    onPreview = { onPreviewVoice(persona) },
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+
+            Spacer(Modifier.height(16.dp))
             Text("AI backend", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
             Text(
@@ -81,7 +109,7 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             BackendOption(
                 title = "On-device (offline)",
@@ -157,7 +185,10 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(24.dp))
             Button(
-                onClick = { onSave(selectedType, ollamaUrl, ollamaModel); onBack() },
+                onClick = {
+                    onSave(selectedType, ollamaUrl, ollamaModel, selectedPersona)
+                    onBack()
+                },
                 enabled = selectedType == BackendType.ON_DEVICE ||
                     (ollamaUrl.isNotBlank() && ollamaModel.isNotBlank()),
                 modifier = Modifier.fillMaxWidth(),
@@ -165,6 +196,52 @@ fun SettingsScreen(
                 Text("Save")
             }
         }
+    }
+}
+
+@Composable
+private fun PersonaOption(
+    persona: Persona,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onPreview: () -> Unit,
+) {
+    Card(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            RadioButton(selected = selected, onClick = onSelect)
+            Column(modifier = Modifier.weight(1f)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(persona.displayName, style = MaterialTheme.typography.bodyLarge)
+                    GenderBadge(persona.gender)
+                }
+                Text(
+                    persona.tagline,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onPreview) {
+                Icon(Icons.Filled.VolumeUp, contentDescription = "Preview ${persona.displayName}'s voice")
+            }
+        }
+    }
+}
+
+@Composable
+private fun GenderBadge(gender: VoiceGender) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(6.dp),
+    ) {
+        Text(
+            text = if (gender == VoiceGender.FEMALE) "Female voice" else "Male voice",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        )
     }
 }
 

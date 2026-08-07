@@ -55,6 +55,7 @@ import com.jarvis.assistant.model.Sender
 fun ChatScreen(
     modelState: ModelState,
     backendType: BackendType,
+    personaName: String,
     messages: List<ChatMessage>,
     isListening: Boolean,
     isGenerating: Boolean,
@@ -70,7 +71,7 @@ fun ChatScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Jarvis") },
+                title = { Text(personaName) },
                 actions = {
                     IconButton(onClick = { onToggleWakeWord(!wakeWordEnabled) }) {
                         Icon(

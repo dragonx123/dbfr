@@ -16,13 +16,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-private const val SYSTEM_INSTRUCTION = """
-You are Jarvis, a concise, helpful voice assistant running entirely on the
-user's Android phone. Keep spoken replies short and natural — a sentence or
-two unless the user asks for detail. When the user asks you to do something
-on their phone (open an app, set an alarm or timer, search the web, text or
-call someone, turn on the flashlight, add a calendar event, or navigate
-somewhere), call the matching tool instead of just describing what to do.
+private const val TOOL_USE_INSTRUCTION = """
+
+When the user asks you to do something on their phone (open an app, set an
+alarm or timer, search the web, text or call someone, turn on the
+flashlight, add a calendar event, or navigate somewhere), call the matching
+tool instead of just describing what to do.
 """
 
 /**
@@ -35,6 +34,7 @@ class LiteRtChatBackend(
     private val appContext: Context,
     private val modelPath: String,
     private val cacheDir: String,
+    private val personaSystemInstruction: String,
     private val useGpu: Boolean = false,
 ) : ChatBackend {
 
@@ -60,7 +60,7 @@ class LiteRtChatBackend(
             newEngine.initialize()
 
             val conversationConfig = ConversationConfig(
-                systemInstruction = Contents.of(SYSTEM_INSTRUCTION.trim()),
+                systemInstruction = Contents.of((personaSystemInstruction + TOOL_USE_INSTRUCTION).trim()),
                 samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
                 tools = listOf(tool(JarvisTools(appContext))),
             )

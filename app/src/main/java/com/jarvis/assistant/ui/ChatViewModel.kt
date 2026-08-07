@@ -12,6 +12,7 @@ import com.jarvis.assistant.model.BackendSettings
 import com.jarvis.assistant.model.BackendType
 import com.jarvis.assistant.model.ChatMessage
 import com.jarvis.assistant.model.ModelRepository
+import com.jarvis.assistant.model.Persona
 import com.jarvis.assistant.model.Sender
 import com.jarvis.assistant.voice.SpeechToText
 import com.jarvis.assistant.voice.TextToSpeechManager
@@ -55,6 +56,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _ollamaModel = MutableStateFlow(backendSettings.ollamaModel)
     val ollamaModel: StateFlow<String> = _ollamaModel.asStateFlow()
 
+    private val _persona = MutableStateFlow(backendSettings.persona)
+    val persona: StateFlow<Persona> = _persona.asStateFlow()
+
     private val _isListening = MutableStateFlow(false)
     val isListening: StateFlow<Boolean> = _isListening.asStateFlow()
 
@@ -71,7 +75,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val wakeWordEnabled: StateFlow<Boolean> = _wakeWordEnabled.asStateFlow()
 
     init {
-        tts.setOnSpeakingChanged { _isSpeaking.value = it }
+        tts.setOnSpeakingChanged { speaking ->
+            _isSpeaking.value = speaking
+            // Reset to the persisted persona's voice after every utterance, so a
+            // Settings preview (which temporarily swaps the voice) never leaks
+            // into actual chat replies if the user backs out without saving.
+            if (!speaking) tts.applyGender(backendSettings.persona.gender)
+        }
+        tts.applyGender(backendSettings.persona.gender)
         initializeBackend()
 
         viewModelScope.launch {
@@ -85,20 +96,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Persists a new backend configuration and (re)connects to it. Called from the Settings screen. */
-    fun updateBackendSettings(type: BackendType, ollamaBaseUrl: String, ollamaModel: String) {
+    /**
+     * Persists a new backend configuration and persona together, then
+     * (re)connects once. Called from the Settings screen's Save button.
+     */
+    fun updateSettings(type: BackendType, ollamaBaseUrl: String, ollamaModel: String, newPersona: Persona) {
         backendSettings.backendType = type
         backendSettings.ollamaBaseUrl = ollamaBaseUrl
         backendSettings.ollamaModel = ollamaModel
+        backendSettings.persona = newPersona
         _backendType.value = type
         _ollamaBaseUrl.value = backendSettings.ollamaBaseUrl
         _ollamaModel.value = backendSettings.ollamaModel
+        _persona.value = newPersona
+        tts.applyGender(newPersona.gender)
         initializeBackend()
+    }
+
+    /**
+     * Speaks a short sample line so the user can preview a persona's voice
+     * before selecting it. The voice is reset back to the persisted persona
+     * once the utterance finishes (see the speaking-changed listener above),
+     * so previewing never permanently changes the active voice unless saved.
+     */
+    fun previewVoice(previewPersona: Persona) {
+        tts.applyGender(previewPersona.gender)
+        tts.speak("Hello, I'm ${previewPersona.displayName}.")
     }
 
     private fun initializeBackend() {
         backend?.close()
         backend = null
+
+        val systemInstruction = backendSettings.persona.systemInstruction
 
         when (backendSettings.backendType) {
             BackendType.ON_DEVICE -> {
@@ -108,7 +138,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val path = modelRepository.currentModelPath()!!
                 connectBackend(
-                    LiteRtChatBackend(getApplication(), path, modelRepository.engineCacheDir())
+                    LiteRtChatBackend(
+                        getApplication(), path, modelRepository.engineCacheDir(), systemInstruction
+                    )
                 )
             }
             BackendType.OLLAMA -> {
@@ -118,7 +150,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     _modelState.value = ModelState.NotSetUp
                     return
                 }
-                connectBackend(OllamaChatBackend(url, model))
+                connectBackend(OllamaChatBackend(url, model, systemInstruction))
             }
         }
     }
@@ -131,7 +163,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }.onSuccess {
                 backend = newBackend
                 _modelState.value = ModelState.Ready
-                postMessage(Sender.SYSTEM, "Jarvis is ready. Ask me anything, or tell me to do something on your phone.")
+                val name = backendSettings.persona.displayName
+                postMessage(Sender.SYSTEM, "$name is ready. Ask me anything, or tell me to do something on your phone.")
             }.onFailure {
                 _modelState.value = ModelState.Error(it.message ?: "Failed to connect")
             }

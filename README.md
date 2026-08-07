@@ -63,6 +63,18 @@ phone). For the best device-control behavior, a tool-calling-tuned model
 such as **FunctionGemma** works well since JarvisTools relies on the model
 reliably emitting tool calls.
 
+## Assistant voice & persona
+
+Settings also has a **name and voice picker**: Jarvis, Friday, Edith,
+Vision, or Ultron, each with a matching male/female voice and a distinct
+personality baked into the system prompt. Tap the speaker icon next to a
+name to hear a preview before selecting it. Voice matching first tries to
+find an actual male/female-labeled voice from the device's installed TTS
+voices (most engines label at least some, e.g.
+`en-us-x-sfg#female_1-local`); if none is found it falls back to a pitch
+shift, so the two genders always sound distinct regardless of what voices
+are installed. See `model/Persona.kt` to add your own.
+
 ## Using Ollama instead
 
 If you'd rather point Jarvis at a model running on a real computer:
