@@ -43,6 +43,10 @@ wake:
   mode: push_to_talk
   hotkey: "ctrl+space"
 
+dashboard:
+  host: 127.0.0.1
+  port: 8000
+
 memory:
   enabled: true
   db_path: jarvis/memory/jarvis_history.db

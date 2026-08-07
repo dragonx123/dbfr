@@ -3,6 +3,9 @@
     python -m jarvis.main            # voice mode (push-to-talk)
     python -m jarvis.main --text     # type instead of speak
     python -m jarvis.main --once "what's the weather in Austin?"
+
+For the web dashboard instead of the terminal, see jarvis/server.py
+(`python -m jarvis.server`).
 """
 
 from __future__ import annotations
@@ -11,71 +14,39 @@ import argparse
 import logging
 import sys
 
-from .config import load_config, read_system_prompt
-from .llm import OllamaClient
-from .memory import History
-from .tools import time_tools
+from .engine import JarvisEngine
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("jarvis")
 
 
-def build_messages(system_prompt: str, history: History, user_text: str) -> list[dict]:
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(history.recent())
-    messages.append({"role": "user", "content": user_text})
-    return messages
-
-
 def run(args: argparse.Namespace) -> None:
-    cfg = load_config(args.config)
-    system_prompt = read_system_prompt(cfg)
-    llm = OllamaClient(cfg)
-    history = History(cfg)
-
-    tts = None
-    if not args.text:
-        try:
-            from .tts import PiperTTS
-
-            tts = PiperTTS(cfg)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("TTS unavailable (%s) — replies will be text-only.", exc)
-
-    # Let background timers speak/print even outside the main turn.
-    time_tools.set_announce_callback(tts.speak if tts else print)
+    engine = JarvisEngine(config_path=args.config, load_tts=not args.text)
 
     stt = None
     if not args.text and not args.once:
         try:
-            from .stt import WhisperSTT
-
-            stt = WhisperSTT(cfg)
+            stt = engine.stt  # triggers lazy load, may raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("STT unavailable (%s) — falling back to typed input.", exc)
 
-    name = cfg.persona.get("name", "Jarvis")
-    print(f"{name} is online. Model: {cfg.llm.model} | Voice input: {'on' if stt else 'off (typing)'}")
+    print(
+        f"{engine.name} is online. Model: {engine.cfg.llm.model} | "
+        f"Voice input: {'on' if stt else 'off (typing)'}"
+    )
 
     def one_turn(user_text: str) -> str:
         print(f"You: {user_text}")
-        history.add("user", user_text)
-        messages = build_messages(system_prompt, history, user_text)
-
-        def on_tool_call(tool_name, tool_args):
-            print(f"  -> using tool: {tool_name}({tool_args})")
-
-        reply, _ = llm.chat(messages, on_tool_call=on_tool_call)
-        reply = reply or "..."
-        print(f"{name}: {reply}")
-        history.add("assistant", reply)
-        if tts:
-            tts.speak(reply)
+        reply = engine.respond(
+            user_text, on_tool_call=lambda n, a: print(f"  -> using tool: {n}({a})")
+        )
+        print(f"{engine.name}: {reply}")
+        engine.speak(reply)
         return reply
 
     if args.once:
         one_turn(args.once)
-        history.close()
+        engine.close()
         return
 
     try:
@@ -83,7 +54,7 @@ def run(args: argparse.Namespace) -> None:
             if stt:
                 from .audio.recorder import record_until_enter
 
-                audio = record_until_enter(sample_rate=cfg.stt.get("sample_rate", 16000))
+                audio = record_until_enter(sample_rate=engine.cfg.stt.get("sample_rate", 16000))
                 text = stt.transcribe(audio)
                 if not text:
                     print("(didn't catch that — try again)")
@@ -94,16 +65,15 @@ def run(args: argparse.Namespace) -> None:
             if not text:
                 continue
             if text.lower() in {"quit", "exit", "goodbye jarvis"}:
-                print(f"{name}: Goodbye!")
-                if tts:
-                    tts.speak("Goodbye!")
+                print(f"{engine.name}: Goodbye!")
+                engine.speak("Goodbye!")
                 break
 
             one_turn(text)
     except (KeyboardInterrupt, EOFError):
         print("\nShutting down.")
     finally:
-        history.close()
+        engine.close()
 
 
 def main():

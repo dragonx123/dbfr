@@ -18,8 +18,32 @@ You (mic or keyboard) → faster-whisper (STT, GPU) → Ollama LLM + tools → P
   take a screenshot, and an opt-in allowlisted shell command tool
 - Remembers recent conversation across restarts (local SQLite)
 - Text-only mode if you don't want to deal with mic/speakers
+- A live web HUD dashboard (`jarvis/server.py`) — see below
 
 It's a starting point, built to be easy to extend — see [Adding a tool](#adding-a-tool).
+
+## Web dashboard
+
+A dark, animated HUD you open in a browser: a pulsing core visualizer that
+reacts to Jarvis's state (standby / listening / processing / responding),
+live CPU / RAM / GPU / VRAM gauges for your 4070 SUPER, a scrolling chat
+log, and a feed of every tool call as it happens.
+
+```bash
+python -m jarvis.server
+# then open http://127.0.0.1:8000
+```
+
+It's a FastAPI app that drives the *same* `JarvisEngine` the terminal uses
+(`jarvis/engine.py`), so conversation history is shared between the CLI and
+the dashboard. You can type into the chat box, or click the mic button to
+record in the browser (uses `getUserMedia` + `MediaRecorder`, transcribed
+server-side with faster-whisper) — replies still play through your PC's
+speakers via Piper, same as the terminal.
+
+Host/port are configurable under `dashboard:` in `config/config.yaml`. It
+binds to `127.0.0.1` by default (local-only); only widen that if you know
+what you're exposing.
 
 ## Why Ollama + these models for a 4070 SUPER
 
@@ -66,9 +90,10 @@ Either script will: install/verify Ollama, pull the default model, create a
 python -m jarvis.main            # voice mode: press ENTER to talk, ENTER again to stop
 python -m jarvis.main --text     # type instead of speaking
 python -m jarvis.main --once "what time is it?"   # one-shot, scriptable
+python -m jarvis.server          # web dashboard at http://127.0.0.1:8000
 ```
 
-Say/type `quit` or `exit` to leave.
+Say/type `quit` or `exit` to leave the terminal mode.
 
 ## Configuration
 
@@ -88,15 +113,19 @@ jarvis/
   config/config.yaml       # all settings
   prompts/system_prompt.txt
   jarvis/
-    main.py                # entrypoint / conversation loop
-    llm/ollama_client.py   # Ollama chat + tool-calling loop
-    stt/whisper_stt.py      # faster-whisper (GPU)
-    tts/piper_tts.py         # Piper TTS
-    audio/                    # mic recording + playback
-    wake/hotkey.py             # optional global-hotkey push-to-talk
-    tools/                      # time, web/weather, system-control tools
-    memory/history.py            # SQLite conversation history
-  scripts/                       # one-shot setup scripts
+    main.py                # terminal entrypoint / conversation loop
+    server.py               # web dashboard entrypoint (FastAPI + WebSocket)
+    engine.py                 # JarvisEngine — shared by main.py and server.py
+    system_stats.py            # CPU/RAM/GPU telemetry for the dashboard gauges
+    llm/ollama_client.py         # Ollama chat + tool-calling loop
+    stt/whisper_stt.py            # faster-whisper (GPU)
+    tts/piper_tts.py                # Piper TTS
+    audio/                            # mic recording + playback (terminal mode)
+    wake/hotkey.py                     # optional global-hotkey push-to-talk
+    tools/                               # time, web/weather, system-control tools
+    memory/history.py                     # SQLite conversation history
+  web/                        # dashboard frontend (HTML/CSS/JS, no build step)
+  scripts/                    # one-shot setup scripts
 ```
 
 ## Adding a tool
@@ -134,3 +163,9 @@ to gate it behind a `tools.some_flag: true` entry in `config.yaml`.
 - **Global hotkey mode doesn't capture keys** — some OSes require extra
   permissions for system-wide key capture; the default ENTER-based
   push-to-talk (`wake.mode: push_to_talk`) avoids this entirely.
+- **Dashboard GPU gauges show "nvidia-smi not found"** — `nvidia-smi` ships
+  with the standard NVIDIA driver, so make sure it's on PATH (`nvidia-smi`
+  in a terminal should print your 4070S). CPU/RAM gauges work regardless.
+- **Mic button in the dashboard does nothing** — browsers only allow
+  microphone access on `localhost`/`127.0.0.1` or HTTPS; open the dashboard
+  from the PC it's running on, and allow the mic permission prompt.

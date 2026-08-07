@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>J.A.R.V.I.S.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="scanlines"></div>
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-dot"></span>J.A.R.V.I.S.</div>
+    <div class="status-cluster">
+      <span class="model-tag" id="model-tag">model: --</span>
+      <span class="pill offline" id="conn-pill">OFFLINE</span>
+      <span class="clock" id="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- Left: system telemetry -->
+    <aside class="panel stats-panel">
+      <h2>System Telemetry</h2>
+
+      <div class="gauge" id="gauge-cpu">
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 74 74">
+            <circle class="gauge-track" cx="37" cy="37" r="30"></circle>
+            <circle class="gauge-fill" cx="37" cy="37" r="30" data-circumference></circle>
+          </svg>
+          <div class="gauge-percent-text">0%</div>
+        </div>
+        <div class="gauge-info">
+          <div class="gauge-label">CPU</div>
+          <div class="gauge-detail">--</div>
+        </div>
+      </div>
+
+      <div class="gauge" id="gauge-ram">
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 74 74">
+            <circle class="gauge-track" cx="37" cy="37" r="30"></circle>
+            <circle class="gauge-fill" cx="37" cy="37" r="30" data-circumference></circle>
+          </svg>
+          <div class="gauge-percent-text">0%</div>
+        </div>
+        <div class="gauge-info">
+          <div class="gauge-label">RAM</div>
+          <div class="gauge-detail">--</div>
+        </div>
+      </div>
+
+      <div class="gauge" id="gauge-gpu">
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 74 74">
+            <circle class="gauge-track" cx="37" cy="37" r="30"></circle>
+            <circle class="gauge-fill" cx="37" cy="37" r="30" data-circumference></circle>
+          </svg>
+          <div class="gauge-percent-text">0%</div>
+        </div>
+        <div class="gauge-info">
+          <div class="gauge-label">GPU</div>
+          <div class="gauge-detail">--</div>
+        </div>
+      </div>
+
+      <div class="gauge" id="gauge-vram">
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 74 74">
+            <circle class="gauge-track" cx="37" cy="37" r="30"></circle>
+            <circle class="gauge-fill" cx="37" cy="37" r="30" data-circumference></circle>
+          </svg>
+          <div class="gauge-percent-text">0%</div>
+        </div>
+        <div class="gauge-info">
+          <div class="gauge-label">VRAM</div>
+          <div class="gauge-detail">--</div>
+        </div>
+      </div>
+
+      <div class="gpu-name" id="gpu-name">GPU: detecting...</div>
+    </aside>
+
+    <!-- Center: core visualizer + chat -->
+    <section class="core-panel">
+      <div class="core-wrap" id="core-wrap">
+        <svg class="core-rings" viewBox="0 0 210 210">
+          <circle class="ring-core" cx="105" cy="105" r="38"></circle>
+          <circle class="ring-outer" cx="105" cy="105" r="100"></circle>
+          <circle class="ring-mid" cx="105" cy="105" r="80"></circle>
+          <circle class="ring-inner" cx="105" cy="105" r="58"></circle>
+        </svg>
+        <div class="core-center">
+          <div class="core-state" id="core-state">STANDBY</div>
+          <div class="core-wave" id="core-wave">
+            <span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-log" id="chat-log">
+        <div class="empty-hint">No transmissions yet. Say hello.</div>
+      </div>
+
+      <form class="input-row" id="chat-form">
+        <button type="button" class="mic-btn" id="mic-btn" title="Push to talk">🎙</button>
+        <input id="chat-input" autocomplete="off" placeholder="Message Jarvis..." />
+        <button type="submit" class="send-btn">SEND</button>
+      </form>
+    </section>
+
+    <!-- Right: tool / activity log -->
+    <aside class="panel log-panel">
+      <h2>Activity Log</h2>
+      <div class="tool-log" id="tool-log">
+        <div class="empty-hint">Tool calls will appear here.</div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

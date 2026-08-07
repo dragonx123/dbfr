@@ -31,3 +31,14 @@ class WhisperSTT:
             vad_filter=True,
         )
         return " ".join(seg.text.strip() for seg in segments).strip()
+
+    def transcribe_file(self, path: str) -> str:
+        """Transcribe an audio file from disk (any format ffmpeg/PyAV can decode —
+        used by the web dashboard, which uploads browser-recorded webm/opus clips).
+        """
+        segments, _info = self.model.transcribe(
+            path,
+            language=self.cfg.stt.get("language", "en"),
+            vad_filter=True,
+        )
+        return " ".join(seg.text.strip() for seg in segments).strip()
