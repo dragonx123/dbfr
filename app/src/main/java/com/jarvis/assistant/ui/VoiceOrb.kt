@@ -27,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.pow
@@ -205,6 +206,17 @@ fun PlexusOrb(
         }
     }
 
+    // A one-shot expanding shockwave ring on entering an active phase, so
+    // transitions (start listening, start speaking) feel like events instead
+    // of the sphere just changing its idle math.
+    val transitionPulse = remember { Animatable(1f) }
+    LaunchedEffect(phase) {
+        if (phase == OrbPhase.LISTENING || phase == OrbPhase.THINKING || phase == OrbPhase.SPEAKING) {
+            transitionPulse.snapTo(0f)
+            transitionPulse.animateTo(1f, animationSpec = tween(650))
+        }
+    }
+
     // The single clock driving rotation and every phase's breathing/texture math.
     LaunchedEffect(Unit) {
         var lastFrameNanos = withFrameNanos { it }
@@ -248,8 +260,11 @@ fun PlexusOrb(
     Canvas(modifier = modifier) {
         val cx = size.width / 2f
         val cy = size.height / 2f
-        val baseRadius = min(size.width, size.height) * 0.42f
         val energy = energySmoothed
+        // Slow "breathing" of the whole sphere so even IDLE is never a
+        // frozen radius; energy adds a slight swell on top while active.
+        val breath = 1f + 0.025f * sin(clock * 0.9f) + energy * 0.04f
+        val baseRadius = min(size.width, size.height) * 0.42f * breath
         val dim = if (phase == OrbPhase.MUTED) 0.45f else 1f
         val jitterAmount = 0.04f + energy * 0.5f
 
@@ -403,6 +418,89 @@ fun PlexusOrb(
             if (coreCloud.isSpark[i]) {
                 drawCircle(cloudColor.copy(alpha = (finalAlpha * 0.35f).coerceIn(0f, 1f)), radius = radiusPx * 2.5f, center = centerPt)
             }
+        }
+
+        // Precessing equatorial ring: a thin 3D orbit line around the sphere,
+        // tilted and slowly wobbling independently of the mesh rotation —
+        // reads as the orb's "gyroscope" and keeps the silhouette moving even
+        // when the mesh itself is calm.
+        run {
+            val segments = 48
+            val ringR = 1.22f
+            val tilt = 0.5f + 0.18f * sin(clock * 0.17f)
+            val ringYaw = rotationY * 0.6f + clock * 0.25f
+            val cosT = cos(tilt); val sinT = sin(tilt)
+            val cosP = cos(ringYaw); val sinP = sin(ringYaw)
+            val ringStroke = 1.dp.toPx()
+            var prevX = 0f; var prevY = 0f; var prevAlpha = 0f; var hasPrev = false
+            for (s in 0..segments) {
+                val ang = s / segments.toFloat() * 2f * PI.toFloat()
+                val x0 = cos(ang) * ringR
+                val z0 = sin(ang) * ringR
+                // Tilt around X, then yaw around Y, then the same perspective as the mesh.
+                val y1 = -z0 * sinT
+                val z1 = z0 * cosT
+                val x2 = x0 * cosP + z1 * sinP
+                val z2 = -x0 * sinP + z1 * cosP
+                val perspective = 1f + z2 * 0.15f
+                val px = cx + x2 * baseRadius * perspective
+                val py = cy + y1 * baseRadius * perspective
+                val depthT = ((z2 / ringR) * 0.5f + 0.5f).coerceIn(0f, 1f)
+                val segAlpha = lerp(0.04f, 0.4f, depthT.pow(1.5f)) * dim * (0.5f + energy * 0.8f)
+                if (hasPrev) {
+                    drawLine(
+                        color.copy(alpha = ((prevAlpha + segAlpha) * 0.5f).coerceIn(0f, 1f)),
+                        Offset(prevX, prevY), Offset(px, py),
+                        strokeWidth = ringStroke, cap = StrokeCap.Round, blendMode = BlendMode.Plus,
+                    )
+                }
+                prevX = px; prevY = py; prevAlpha = segAlpha; hasPrev = true
+            }
+        }
+
+        // Spark streaks: short-lived bright pulses racing along random chords,
+        // like signals firing through circuitry. Deterministic per cycle (the
+        // chord is picked by hashing the cycle number), so no per-frame state.
+        if (chordEdges.isNotEmpty()) {
+            val streakCount = 1 + (energy * 2.5f).toInt()
+            for (k in 0 until streakCount) {
+                val cycle = clock * (0.5f + 0.17f * k) + k * 7.31f
+                val progress = cycle - floor(cycle)
+                val rng = Random(floor(cycle).toInt() * 31 + k * 101)
+                val (a, b) = chordEdges[rng.nextInt(chordEdges.size)]
+                val streakAlpha = min(alphas[a], alphas[b]) * (0.5f + energy * 0.5f)
+                if (streakAlpha < 0.05f) continue
+                val headT = progress
+                val tailT = (progress - 0.22f).coerceAtLeast(0f)
+                val hx = lerp(screenX[a], screenX[b], headT)
+                val hy = lerp(screenY[a], screenY[b], headT)
+                val tx = lerp(screenX[a], screenX[b], tailT)
+                val ty = lerp(screenY[a], screenY[b], tailT)
+                drawLine(
+                    hotColor.copy(alpha = (streakAlpha * 0.8f).coerceIn(0f, 1f)),
+                    Offset(tx, ty), Offset(hx, hy),
+                    strokeWidth = 1.4.dp.toPx(), cap = StrokeCap.Round, blendMode = BlendMode.Plus,
+                )
+                drawCircle(
+                    hotColor.copy(alpha = streakAlpha.coerceIn(0f, 1f)),
+                    radius = 2.2.dp.toPx(), center = Offset(hx, hy), blendMode = BlendMode.Plus,
+                )
+            }
+        }
+
+        // Transition shockwave: one expanding, fading ring when a new active
+        // phase begins (see transitionPulse above).
+        val pulse = transitionPulse.value
+        if (pulse < 0.995f) {
+            val waveRadius = baseRadius * (0.55f + 1.0f * pulse)
+            val waveAlpha = ((1f - pulse) * 0.4f) * dim
+            drawCircle(
+                color = hotColor.copy(alpha = waveAlpha.coerceIn(0f, 1f)),
+                radius = waveRadius,
+                center = Offset(cx, cy),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+                blendMode = BlendMode.Plus,
+            )
         }
     }
 }

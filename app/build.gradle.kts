@@ -72,8 +72,11 @@ dependencies {
     // https://github.com/google-ai-edge/LiteRT-LM
     implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
 
-    // -- Ollama backend (remote/LAN server chat, see OllamaChatBackend.kt) --
+    // -- Ollama + Cloud API backends and WebTools (HTTP/SSE streaming) --
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // -- Encrypted storage for cloud API keys (see BackendSettings.kt) --
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // -- Coroutines --
     // Pinned high (not just left to transitive resolution): litertlm-android's

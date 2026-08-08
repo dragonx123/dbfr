@@ -64,6 +64,14 @@ fun VoiceModeScreen(
                 ),
             ),
     ) {
+        // Subtle HUD chrome behind everything — quieter than the chat screen's
+        // (lower glyph alpha, no scanline) so the orb stays the hero.
+        HudBackdrop(
+            color = orbColor,
+            modifier = Modifier.fillMaxSize(),
+            glyphAlpha = 0.06f,
+            showScanline = false,
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()

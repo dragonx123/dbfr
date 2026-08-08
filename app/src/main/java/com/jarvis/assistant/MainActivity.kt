@@ -60,11 +60,20 @@ class MainActivity : ComponentActivity() {
                 val ttsEnabled by viewModel.ttsEnabled.collectAsState()
                 val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsState()
 
+                val cloudProvider by viewModel.cloudProvider.collectAsState()
+                val cloudApiKey by viewModel.cloudApiKey.collectAsState()
+                val cloudModel by viewModel.cloudModel.collectAsState()
+                val cloudBaseUrl by viewModel.cloudBaseUrl.collectAsState()
+
                 when (screen) {
                     Screen.SETTINGS -> SettingsScreen(
                         currentBackendType = backendType,
                         currentOllamaUrl = ollamaBaseUrl,
                         currentOllamaModel = ollamaModel,
+                        currentCloudProvider = cloudProvider,
+                        currentCloudApiKey = cloudApiKey,
+                        currentCloudModel = cloudModel,
+                        currentCloudBaseUrl = cloudBaseUrl,
                         currentPersona = persona,
                         onSave = viewModel::updateSettings,
                         onPreviewVoice = viewModel::previewVoice,
@@ -111,6 +120,7 @@ class MainActivity : ComponentActivity() {
                         modelState = modelState,
                         backendType = backendType,
                         personaName = persona.displayName,
+                        personaColor = persona.orbColor,
                         messages = messages,
                         isListening = isListening,
                         isGenerating = isGenerating,

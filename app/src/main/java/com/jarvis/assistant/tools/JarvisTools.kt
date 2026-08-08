@@ -12,6 +12,7 @@ import android.text.format.DateFormat
 import com.google.ai.edge.litertlm.Tool
 import com.google.ai.edge.litertlm.ToolParam
 import com.google.ai.edge.litertlm.ToolSet
+import com.jarvis.assistant.ai.WebTools
 import com.jarvis.assistant.util.AppLogger
 import java.util.Date
 
@@ -105,6 +106,38 @@ class JarvisTools(private val context: Context) : ToolSet {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
         return "Searching the web for \"$query\"."
+    }
+
+    @Tool(
+        description = "Search the web and get back the top results' titles, snippets and URLs " +
+            "as text for YOU to read and use when answering. Use this for live/current data: " +
+            "news, weather, prices, sports scores, opening hours, facts you're unsure of."
+    )
+    fun searchWebForAnswer(
+        @ToolParam(description = "What to search for.") query: String
+    ): String {
+        AppLogger.i(TAG, "searchWebForAnswer(query=\"$query\")")
+        return runCatching {
+            val results = WebTools.search(query)
+            if (results.isEmpty()) return "No results found for \"$query\"."
+            buildString {
+                results.forEachIndexed { i, r ->
+                    appendLine("${i + 1}. ${r.title}\n${r.snippet}\nSource: ${r.url}\n")
+                }
+            }
+        }.getOrElse { "Web search failed: ${it.message}. Answer from your own knowledge and say so." }
+    }
+
+    @Tool(
+        description = "Fetch a web page and get its readable text content back for YOU to read " +
+            "and use when answering. Use after searchWebForAnswer when a result needs a closer look."
+    )
+    fun fetchWebPage(
+        @ToolParam(description = "Full URL of the page, starting with http:// or https://") url: String
+    ): String {
+        AppLogger.i(TAG, "fetchWebPage(url=$url)")
+        return runCatching { WebTools.fetchPage(url) }
+            .getOrElse { "Fetching the page failed: ${it.message}." }
     }
 
     @Tool(description = "Open the messaging app with a text message pre-filled to a phone number, ready for the user to send.")

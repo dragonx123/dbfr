@@ -24,15 +24,16 @@ private const val TAG = "LiteRtChatBackend"
 private const val TOOL_USE_INSTRUCTION = """
 
 When the user asks you to do something on their phone (open an app, set an
-alarm or timer, search the web, text or call someone, turn on the
-flashlight, add a calendar event, or navigate somewhere), call the matching
-tool instead of just describing what to do.
+alarm or timer, text or call someone, turn on the flashlight, add a calendar
+event, or navigate somewhere), call the matching tool instead of just
+describing what to do.
 
-You run entirely on-device and have no internet or location access, and no
-tool exists for live data (weather, restaurants nearby, news, sports scores,
-etc.). Never claim to be "checking", "retrieving", or "looking up" that kind
-of information — you aren't and can't. Say plainly that you don't have live
-access to it, and suggest the web search tool instead if that would help.
+For current or live information (news, weather, prices, sports scores,
+nearby places, anything you don't reliably know), call searchWebForAnswer
+and use its results in your reply — never invent live data, and never claim
+to be "checking" or "retrieving" something without actually calling a tool.
+Use fetchWebPage when one specific page needs a closer read. If a tool call
+fails, say so plainly and answer from your own knowledge.
 """
 
 /**

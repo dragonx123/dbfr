@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -43,13 +45,45 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.jarvis.assistant.ai.OllamaChatBackend
+import com.jarvis.assistant.model.BackendConfig
+import com.jarvis.assistant.model.BackendSettings
 import com.jarvis.assistant.model.BackendType
+import com.jarvis.assistant.model.CloudProvider
 import com.jarvis.assistant.model.Persona
 import com.jarvis.assistant.model.Personas
 import com.jarvis.assistant.model.VoiceGender
 import kotlinx.coroutines.launch
+
+private fun providerLabel(provider: CloudProvider): String = when (provider) {
+    CloudProvider.GEMINI -> "Google Gemini"
+    CloudProvider.ANTHROPIC -> "Anthropic Claude"
+    CloudProvider.OPENAI_COMPAT -> "OpenAI-compatible"
+}
+
+/**
+ * Switches provider, and swaps the model/baseUrl fields to the new
+ * provider's defaults — but only when the user hadn't customized them (i.e.
+ * they still equal some provider's default), so a hand-entered model name
+ * never gets clobbered by tapping through providers.
+ */
+private fun switchProvider(
+    new: CloudProvider,
+    old: CloudProvider,
+    setModel: (String) -> Unit,
+    setBaseUrl: (String) -> Unit,
+    currentModel: String,
+): CloudProvider {
+    if (new == old) return old
+    val allDefaults = CloudProvider.entries.map { BackendSettings.defaultModelFor(it) }
+    if (currentModel.isBlank() || currentModel in allDefaults) {
+        setModel(BackendSettings.defaultModelFor(new))
+    }
+    setBaseUrl(BackendSettings.defaultBaseUrlFor(new))
+    return new
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,8 +91,12 @@ fun SettingsScreen(
     currentBackendType: BackendType,
     currentOllamaUrl: String,
     currentOllamaModel: String,
+    currentCloudProvider: CloudProvider,
+    currentCloudApiKey: String,
+    currentCloudModel: String,
+    currentCloudBaseUrl: String,
     currentPersona: Persona,
-    onSave: (BackendType, String, String, Persona) -> Unit,
+    onSave: (BackendConfig) -> Unit,
     onPreviewVoice: (Persona) -> Unit,
     onOpenLogs: () -> Unit,
     onBack: () -> Unit,
@@ -66,6 +104,14 @@ fun SettingsScreen(
     var selectedType by remember { mutableStateOf(currentBackendType) }
     var ollamaUrl by remember { mutableStateOf(currentOllamaUrl.ifBlank { "http://" }) }
     var ollamaModel by remember { mutableStateOf(currentOllamaModel) }
+    var cloudProvider by remember { mutableStateOf(currentCloudProvider) }
+    var cloudApiKey by remember { mutableStateOf(currentCloudApiKey) }
+    var cloudModel by remember {
+        mutableStateOf(currentCloudModel.ifBlank { BackendSettings.defaultModelFor(currentCloudProvider) })
+    }
+    var cloudBaseUrl by remember {
+        mutableStateOf(currentCloudBaseUrl.ifBlank { BackendSettings.defaultBaseUrlFor(currentCloudProvider) })
+    }
     var selectedPersona by remember { mutableStateOf(currentPersona) }
 
     var availableModels by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -92,6 +138,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(20.dp),
         ) {
             Text("Assistant voice", style = MaterialTheme.typography.titleLarge)
@@ -135,6 +182,64 @@ fun SettingsScreen(
                 selected = selectedType == BackendType.OLLAMA,
                 onSelect = { selectedType = BackendType.OLLAMA },
             )
+            Spacer(Modifier.height(8.dp))
+            BackendOption(
+                title = "Cloud API (your key)",
+                description = "Google Gemini, Anthropic Claude, or any OpenAI-compatible API with your own key. Best quality, web browsing, and (later) screen understanding. Needs internet.",
+                selected = selectedType == BackendType.CLOUD_API,
+                onSelect = { selectedType = BackendType.CLOUD_API },
+            )
+
+            if (selectedType == BackendType.CLOUD_API) {
+                Spacer(Modifier.height(20.dp))
+                Text("Provider", style = MaterialTheme.typography.bodyLarge)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ProviderChip("Gemini", cloudProvider == CloudProvider.GEMINI) {
+                        cloudProvider = switchProvider(CloudProvider.GEMINI, cloudProvider, { cloudModel = it }, { cloudBaseUrl = it }, cloudModel)
+                    }
+                    ProviderChip("Claude", cloudProvider == CloudProvider.ANTHROPIC) {
+                        cloudProvider = switchProvider(CloudProvider.ANTHROPIC, cloudProvider, { cloudModel = it }, { cloudBaseUrl = it }, cloudModel)
+                    }
+                    ProviderChip("OpenAI+", cloudProvider == CloudProvider.OPENAI_COMPAT) {
+                        cloudProvider = switchProvider(CloudProvider.OPENAI_COMPAT, cloudProvider, { cloudModel = it }, { cloudBaseUrl = it }, cloudModel)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = cloudApiKey,
+                    onValueChange = { cloudApiKey = it },
+                    label = { Text("API key") },
+                    placeholder = { Text("Paste your ${providerLabel(cloudProvider)} API key") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = cloudModel,
+                    onValueChange = { cloudModel = it },
+                    label = { Text("Model") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (cloudProvider == CloudProvider.OPENAI_COMPAT) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = cloudBaseUrl,
+                        onValueChange = { cloudBaseUrl = it },
+                        label = { Text("Base URL") },
+                        placeholder = { Text("https://api.openai.com") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "Works with any OpenAI-compatible server: Groq, Mistral, LM Studio, …",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             if (selectedType == BackendType.OLLAMA) {
                 Spacer(Modifier.height(20.dp))
@@ -197,11 +302,25 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
             Button(
                 onClick = {
-                    onSave(selectedType, ollamaUrl, ollamaModel, selectedPersona)
+                    onSave(
+                        BackendConfig(
+                            type = selectedType,
+                            ollamaBaseUrl = ollamaUrl,
+                            ollamaModel = ollamaModel,
+                            cloudProvider = cloudProvider,
+                            cloudApiKey = cloudApiKey,
+                            cloudModel = cloudModel,
+                            cloudBaseUrl = cloudBaseUrl,
+                            persona = selectedPersona,
+                        )
+                    )
                     onBack()
                 },
-                enabled = selectedType == BackendType.ON_DEVICE ||
-                    (ollamaUrl.isNotBlank() && ollamaModel.isNotBlank()),
+                enabled = when (selectedType) {
+                    BackendType.ON_DEVICE -> true
+                    BackendType.OLLAMA -> ollamaUrl.isNotBlank() && ollamaModel.isNotBlank()
+                    BackendType.CLOUD_API -> cloudApiKey.isNotBlank() && cloudModel.isNotBlank()
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Save")
@@ -277,6 +396,24 @@ private fun PersonaOption(
                 Icon(Icons.Filled.VolumeUp, contentDescription = "Preview ${persona.displayName}'s voice")
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProviderChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+        border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(8.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+        )
     }
 }
 

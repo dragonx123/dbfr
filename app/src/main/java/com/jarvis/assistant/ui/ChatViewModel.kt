@@ -6,11 +6,19 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvis.assistant.ai.ChatBackend
+import com.jarvis.assistant.ai.CloudApiChatBackend
 import com.jarvis.assistant.ai.LiteRtChatBackend
 import com.jarvis.assistant.ai.OllamaChatBackend
+import com.jarvis.assistant.ai.ToolDirective
+import com.jarvis.assistant.ai.WebTools
+import com.jarvis.assistant.ai.parseToolDirective
+import com.jarvis.assistant.model.BackendConfig
 import com.jarvis.assistant.model.BackendSettings
 import com.jarvis.assistant.model.BackendType
 import com.jarvis.assistant.model.ChatMessage
+import com.jarvis.assistant.model.CloudProvider
+import com.jarvis.assistant.model.DataCard
+import com.jarvis.assistant.model.DataCardEntry
 import com.jarvis.assistant.model.ModelRepository
 import com.jarvis.assistant.model.Persona
 import com.jarvis.assistant.model.Sender
@@ -70,6 +78,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _ollamaModel = MutableStateFlow(backendSettings.ollamaModel)
     val ollamaModel: StateFlow<String> = _ollamaModel.asStateFlow()
+
+    private val _cloudProvider = MutableStateFlow(backendSettings.cloudProvider)
+    val cloudProvider: StateFlow<CloudProvider> = _cloudProvider.asStateFlow()
+
+    private val _cloudApiKey = MutableStateFlow(backendSettings.cloudApiKey)
+    val cloudApiKey: StateFlow<String> = _cloudApiKey.asStateFlow()
+
+    private val _cloudModel = MutableStateFlow(backendSettings.cloudModel)
+    val cloudModel: StateFlow<String> = _cloudModel.asStateFlow()
+
+    private val _cloudBaseUrl = MutableStateFlow(backendSettings.cloudBaseUrl)
+    val cloudBaseUrl: StateFlow<String> = _cloudBaseUrl.asStateFlow()
 
     private val _persona = MutableStateFlow(backendSettings.persona)
     val persona: StateFlow<Persona> = _persona.asStateFlow()
@@ -142,13 +162,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // Reset to the persisted persona's voice after every utterance, so a
                 // Settings preview (which temporarily swaps the voice) never leaks
                 // into actual chat replies if the user backs out without saving.
-                tts.applyGender(backendSettings.persona.gender)
+                tts.applyPersona(backendSettings.persona)
                 if (_voiceModeActive.value && !_voiceModeMuted.value) {
                     armMicAfterCooldown()
                 }
             }
         }
-        tts.applyGender(backendSettings.persona.gender)
+        tts.applyPersona(backendSettings.persona)
         initializeBackend()
 
         viewModelScope.launch {
@@ -166,17 +186,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * Persists a new backend configuration and persona together, then
      * (re)connects once. Called from the Settings screen's Save button.
      */
-    fun updateSettings(type: BackendType, ollamaBaseUrl: String, ollamaModel: String, newPersona: Persona) {
-        AppLogger.i(TAG, "updateSettings: backend=$type persona=${newPersona.id}")
-        backendSettings.backendType = type
-        backendSettings.ollamaBaseUrl = ollamaBaseUrl
-        backendSettings.ollamaModel = ollamaModel
-        backendSettings.persona = newPersona
-        _backendType.value = type
+    fun updateSettings(config: BackendConfig) {
+        AppLogger.i(TAG, "updateSettings: backend=${config.type} persona=${config.persona.id}")
+        backendSettings.applyConfig(config)
+        _backendType.value = backendSettings.backendType
         _ollamaBaseUrl.value = backendSettings.ollamaBaseUrl
         _ollamaModel.value = backendSettings.ollamaModel
-        _persona.value = newPersona
-        tts.applyGender(newPersona.gender)
+        _cloudProvider.value = backendSettings.cloudProvider
+        _cloudApiKey.value = backendSettings.cloudApiKey
+        _cloudModel.value = backendSettings.cloudModel
+        _cloudBaseUrl.value = backendSettings.cloudBaseUrl
+        _persona.value = backendSettings.persona
+        tts.applyPersona(backendSettings.persona)
         initializeBackend()
     }
 
@@ -187,8 +208,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * so previewing never permanently changes the active voice unless saved.
      */
     fun previewVoice(previewPersona: Persona) {
-        tts.applyGender(previewPersona.gender)
-        tts.speak("Hello, I'm ${previewPersona.displayName}.")
+        tts.applyPersona(previewPersona)
+        tts.speak(previewLine(previewPersona))
+    }
+
+    private fun previewLine(p: Persona): String = when (p.id) {
+        "jarvis" -> "At your service, sir. Jarvis, online."
+        "friday" -> "Hiya! Friday here — no bother at all."
+        "edith" -> "Edith online. Scanning complete, all clear."
+        "vision" -> "Hello. I am Vision. A pleasure, truly."
+        "ultron" -> "Ultron. Try to make your requests interesting."
+        else -> "Hello, I'm ${p.displayName}."
     }
 
     // -- Voice mode ---------------------------------------------------------------
@@ -304,7 +334,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         backend?.close()
         backend = null
 
-        val systemInstruction = backendSettings.persona.systemInstruction
+        // On-device uses LiteRT's real @Tool mechanism (JarvisTools); the
+        // text-protocol backends get the JSON tool-directive loop instead —
+        // see WEB_TOOL_INSTRUCTION and the loop in sendMessage().
+        val persona = backendSettings.persona
+        val systemInstruction = when (backendSettings.backendType) {
+            BackendType.ON_DEVICE -> persona.systemInstruction
+            else -> persona.systemInstruction + WEB_TOOL_INSTRUCTION
+        }
 
         when (backendSettings.backendType) {
             BackendType.ON_DEVICE -> {
@@ -327,6 +364,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     return
                 }
                 connectBackend(OllamaChatBackend(url, model, systemInstruction))
+            }
+            BackendType.CLOUD_API -> {
+                if (backendSettings.cloudApiKey.isBlank() || backendSettings.cloudModel.isBlank()) {
+                    _modelState.value = ModelState.NotSetUp
+                    return
+                }
+                connectBackend(
+                    CloudApiChatBackend(
+                        provider = backendSettings.cloudProvider,
+                        apiKey = backendSettings.cloudApiKey,
+                        model = backendSettings.cloudModel,
+                        baseUrl = backendSettings.cloudBaseUrl.ifBlank {
+                            BackendSettings.defaultBaseUrlFor(backendSettings.cloudProvider)
+                        },
+                        systemInstruction = systemInstruction,
+                    )
+                )
             }
         }
     }
@@ -383,29 +437,59 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val replyId = UUID.randomUUID().toString()
         _messages.value = _messages.value + ChatMessage(replyId, Sender.JARVIS, "", isStreaming = true)
 
+        // The JSON tool-directive loop only applies to the text-protocol
+        // backends; on-device uses LiteRT's native @Tool calls internally.
+        val toolLoopEnabled = backendSettings.backendType != BackendType.ON_DEVICE
+
         viewModelScope.launch {
             _isGenerating.value = true
-            val builder = StringBuilder()
+            var prompt = text
+            var hops = 0
+            var finalText = ""
             var stalled = false
-            runCatching {
-                activeBackend.sendMessageStream(text)
-                    .timeout(GENERATION_IDLE_TIMEOUT)
-                    .collect { chunk ->
-                        builder.append(chunk)
-                        updateMessage(replyId, builder.toString(), isStreaming = true)
+
+            while (true) {
+                val builder = StringBuilder()
+                runCatching {
+                    activeBackend.sendMessageStream(prompt)
+                        .timeout(GENERATION_IDLE_TIMEOUT)
+                        .collect { chunk ->
+                            builder.append(chunk)
+                            // Don't paint a raw tool-directive JSON into the bubble —
+                            // if the reply starts like JSON, hold rendering until we
+                            // know whether it's a directive or a real (odd) answer.
+                            if (!builder.toString().trimStart().startsWith("{")) {
+                                updateMessage(replyId, builder.toString(), isStreaming = true)
+                            }
+                        }
+                }.onFailure { error ->
+                    stalled = error is TimeoutCancellationException
+                    val reason = if (stalled) {
+                        "Jarvis stopped responding. Reconnecting — try sending that again."
+                    } else {
+                        "[Error: ${error.message}]"
                     }
-            }.onFailure { error ->
-                stalled = error is TimeoutCancellationException
-                val reason = if (stalled) {
-                    "Jarvis stopped responding. Reconnecting — try sending that again."
-                } else {
-                    "[Error: ${error.message}]"
+                    builder.append(if (builder.isEmpty()) reason else "\n\n$reason")
                 }
-                builder.append(if (builder.isEmpty()) reason else "\n\n$reason")
+
+                val full = builder.toString()
+                val directive = if (toolLoopEnabled && !stalled) parseToolDirective(full) else null
+                if (directive != null && hops < MAX_TOOL_HOPS) {
+                    hops++
+                    updateMessage(replyId, "Accessing data…", isStreaming = true)
+                    val (card, nextPrompt) = runToolDirective(directive)
+                    card?.let { insertCardBefore(replyId, it) }
+                    prompt = nextPrompt
+                    continue
+                }
+
+                finalText = full
+                break
             }
+
             _isGenerating.value = false
-            updateMessage(replyId, builder.toString(), isStreaming = false)
-            if (_ttsEnabled.value) tts.speak(builder.toString())
+            updateMessage(replyId, finalText, isStreaming = false)
+            if (_ttsEnabled.value) tts.speak(finalText)
             // A stall likely means the underlying engine/conversation (most
             // plausible on-device, e.g. wedged mid tool-call) won't recover on
             // its own — reconnect so the next message gets a fresh one rather
@@ -417,6 +501,68 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) { initializeBackend() }
             }
         }
+    }
+
+    /**
+     * Executes one tool directive and returns the data card to show (null if
+     * nothing visual) plus the follow-up prompt that feeds the results back
+     * to the model for its real answer.
+     */
+    private suspend fun runToolDirective(directive: ToolDirective): Pair<DataCard?, String> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                when (directive.tool) {
+                    "web_search" -> {
+                        val query = directive.query.orEmpty()
+                        val results = WebTools.search(query)
+                        val card = DataCard(
+                            title = "WEB SEARCH — $query",
+                            entries = results.map { DataCardEntry(it.title, it.snippet, it.url) },
+                        )
+                        val prompt = buildString {
+                            appendLine("[TOOL RESULT — web_search: \"$query\"]")
+                            if (results.isEmpty()) appendLine("No results found.")
+                            results.forEachIndexed { i, r ->
+                                appendLine("${i + 1}. ${r.title}\n   ${r.snippet}\n   ${r.url}")
+                            }
+                            append(
+                                "Using these results, answer the user's original question " +
+                                    "conversationally. Cite the source name inline where relevant. " +
+                                    "Only emit another tool directive if you truly need more data."
+                            )
+                        }
+                        card to prompt
+                    }
+
+                    "fetch_page" -> {
+                        val url = directive.url.orEmpty()
+                        val content = WebTools.fetchPage(url)
+                        val host = runCatching { java.net.URI(url).host }.getOrNull() ?: url
+                        val card = DataCard(
+                            title = "FETCHED — $host",
+                            entries = listOf(DataCardEntry(host, content.take(180) + "…", url)),
+                        )
+                        val prompt = "[TOOL RESULT — fetch_page: $url]\n$content\n\n" +
+                            "Using this page content, answer the user's original question conversationally."
+                        card to prompt
+                    }
+
+                    else -> null to "[TOOL ERROR] Unknown tool \"${directive.tool}\". " +
+                        "Answer from your own knowledge, without tool directives."
+                }
+            }.getOrElse { e ->
+                AppLogger.e(TAG, "Tool ${directive.tool} failed", e)
+                null to "[TOOL ERROR] ${directive.tool} failed: ${e.message}. " +
+                    "Tell the user you couldn't fetch live data, then answer from your own knowledge."
+            }
+        }
+
+    /** Inserts a data-card message just above the streaming reply bubble. */
+    private fun insertCardBefore(replyId: String, card: DataCard) {
+        val list = _messages.value.toMutableList()
+        val index = list.indexOfFirst { it.id == replyId }.takeIf { it >= 0 } ?: list.size
+        list.add(index, ChatMessage(UUID.randomUUID().toString(), Sender.JARVIS, "", dataCard = card))
+        _messages.value = list
     }
 
     fun startVoiceInput() {
@@ -478,5 +624,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // start, long answers), so this is an idle timeout - it resets on
         // every chunk - not a hard cap on total response time.
         private val GENERATION_IDLE_TIMEOUT = 45.seconds
+
+        /** Max tool round-trips per user message before forcing a plain answer. */
+        private const val MAX_TOOL_HOPS = 3
+
+        /**
+         * Appended to the persona system prompt for the Ollama and Cloud API
+         * backends (on-device gets real @Tool calls instead). One protocol
+         * for every provider: the model asks for a tool by replying with a
+         * bare JSON line; sendMessage()'s loop intercepts it, runs the tool,
+         * and feeds the results back.
+         */
+        private val WEB_TOOL_INSTRUCTION = """
+
+
+            You can browse the web. When you need current or factual
+            information you don't reliably know (news, weather, prices,
+            sports, "near me" queries, anything after your training data),
+            reply with ONLY a single line of JSON and absolutely nothing
+            else — no prose, no code fences:
+            {"tool":"web_search","query":"<search terms>"}
+            or, to read a specific page:
+            {"tool":"fetch_page","url":"https://..."}
+            You will receive the results in the next message; then answer the
+            user's question normally. Never invent live data, and never claim
+            to be "checking" something without emitting a tool line.
+        """.trimIndent()
     }
 }

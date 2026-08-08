@@ -1,6 +1,7 @@
 package com.jarvis.assistant.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.jarvis.assistant.model.BackendType
@@ -59,6 +62,7 @@ fun ChatScreen(
     modelState: ModelState,
     backendType: BackendType,
     personaName: String,
+    personaColor: Color,
     messages: List<ChatMessage>,
     isListening: Boolean,
     isGenerating: Boolean,
@@ -114,22 +118,30 @@ fun ChatScreen(
             }
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            when (modelState) {
-                is ModelState.NotSetUp -> ModelSetupPrompt(backendType, onPickModel, onOpenSettings)
-                is ModelState.Importing -> ModelProgress("Importing model… ${modelState.bytesCopied / (1024 * 1024)} MB")
-                is ModelState.Loading -> ModelProgress(
-                    if (backendType == BackendType.OLLAMA) "Connecting to Ollama…" else "Loading model into memory…"
-                )
-                is ModelState.Error -> ModelSetupPrompt(backendType, onPickModel, onOpenSettings, error = modelState.message)
-                is ModelState.Ready -> {
-                    MessageList(messages, Modifier.weight(1f))
-                    InputBar(
-                        isListening = isListening,
-                        isGenerating = isGenerating,
-                        onSend = onSend,
-                        onMicClick = onMicClick,
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            HudBackdrop(color = personaColor, modifier = Modifier.fillMaxSize())
+            Column(modifier = Modifier.fillMaxSize()) {
+                when (modelState) {
+                    is ModelState.NotSetUp -> ModelSetupPrompt(backendType, onPickModel, onOpenSettings)
+                    is ModelState.Importing -> ModelProgress("Importing model… ${modelState.bytesCopied / (1024 * 1024)} MB")
+                    is ModelState.Loading -> ModelProgress(
+                        when (backendType) {
+                            BackendType.OLLAMA -> "Connecting to Ollama…"
+                            BackendType.CLOUD_API -> "Connecting to cloud API…"
+                            BackendType.ON_DEVICE -> "Loading model into memory…"
+                        }
                     )
+                    is ModelState.Error -> ModelSetupPrompt(backendType, onPickModel, onOpenSettings, error = modelState.message)
+                    is ModelState.Ready -> {
+                        MessageList(messages, Modifier.weight(1f))
+                        ActivityFeed(accentColor = personaColor)
+                        InputBar(
+                            isListening = isListening,
+                            isGenerating = isGenerating,
+                            onSend = onSend,
+                            onMicClick = onMicClick,
+                        )
+                    }
                 }
             }
         }
@@ -148,12 +160,20 @@ private fun ModelSetupPrompt(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (backendType == BackendType.OLLAMA) {
-            Text("Ollama not configured", style = MaterialTheme.typography.titleLarge)
+        if (backendType == BackendType.OLLAMA || backendType == BackendType.CLOUD_API) {
+            val title = if (backendType == BackendType.OLLAMA) "Ollama not configured" else "Cloud API not configured"
+            val body = if (backendType == BackendType.OLLAMA) {
+                "Jarvis is set to use an Ollama server but doesn't have a server URL " +
+                    "and model set yet. Open Settings to configure it."
+            } else {
+                "Jarvis is set to use a cloud API but doesn't have an API key and " +
+                    "model set yet. Open Settings, pick a provider (Gemini, Claude, " +
+                    "or OpenAI-compatible), and paste your key."
+            }
+            Text(title, style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Jarvis is set to use an Ollama server but doesn't have a server URL " +
-                    "and model set yet. Open Settings to configure it.",
+                body,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -216,8 +236,77 @@ private fun MessageList(messages: List<ChatMessage>, modifier: Modifier = Modifi
     }
 }
 
+/**
+ * MCU-style "pulling up data" panel: rendered when a message carries a
+ * [com.jarvis.assistant.model.DataCard] (web search results, fetched pages)
+ * — a bordered console panel instead of a speech bubble, with tappable
+ * source rows that open in the browser.
+ */
+@Composable
+private fun DataCardPanel(card: com.jarvis.assistant.model.DataCard) {
+    val context = LocalContext.current
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)),
+        modifier = Modifier.fillMaxWidth().padding(end = 24.dp),
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = "▮ ${card.title}",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            card.entries.forEach { entry ->
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = entry.url.isNotBlank()) {
+                            runCatching {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(entry.url)
+                                    )
+                                )
+                            }
+                        }
+                ) {
+                    Text(
+                        entry.title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (entry.snippet.isNotBlank()) {
+                        Text(
+                            entry.snippet,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3,
+                        )
+                    }
+                    if (entry.url.isNotBlank()) {
+                        Text(
+                            entry.url,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun MessageBubble(message: ChatMessage) {
+    message.dataCard?.let {
+        DataCardPanel(it)
+        return
+    }
     val isUser = message.sender == Sender.USER
     val isSystem = message.sender == Sender.SYSTEM
     val alignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart

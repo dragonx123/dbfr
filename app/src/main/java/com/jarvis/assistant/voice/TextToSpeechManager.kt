@@ -4,6 +4,7 @@ import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
+import com.jarvis.assistant.model.Persona
 import com.jarvis.assistant.model.VoiceGender
 import com.jarvis.assistant.util.AppLogger
 import java.util.Locale
@@ -16,11 +17,11 @@ class TextToSpeechManager(context: Context) {
 
     private var isReady = false
     private var pendingText: String? = null
-    private var pendingGender: VoiceGender? = null
+    private var pendingPersona: Persona? = null
     private var onSpeakingChanged: (Boolean) -> Unit = {}
 
     // The engine's own default voice, captured once at startup before any
-    // gender is applied. Needed so the pitch-only fallback in [applyGender]
+    // persona is applied. Needed so the pitch-only fallback in [applyPersona]
     // can reset back to a known starting point instead of leaving whatever
     // voice object a *previous* persona's gender match left selected.
     private var defaultVoice: Voice? = null
@@ -36,7 +37,7 @@ class TextToSpeechManager(context: Context) {
             tts.language = Locale.getDefault()
             defaultVoice = tts.voice
             AppLogger.i(TAG, "Engine ready, default voice=${defaultVoice?.name}")
-            pendingGender?.let { applyGender(it) }
+            pendingPersona?.let { applyPersona(it) }
             pendingText?.let { speak(it) }
             pendingText = null
         } else {
@@ -61,42 +62,34 @@ class TextToSpeechManager(context: Context) {
     }
 
     /**
-     * Steers the TTS engine towards a voice matching [gender]. Some engines
-     * name a few of their voices with a "female"/"male" hint, e.g.
-     * "en-us-x-sfg#female_1-local" — when one is found for the current
-     * locale it's selected directly and played at neutral pitch/rate.
-     *
-     * Most modern devices (recent Pixels included) ship only a single local
-     * voice per language with no gender in its name at all, so that match
-     * usually fails — [findVoiceForGender] then falls back to picking a
-     * *different* installed voice deterministically per gender if more than
-     * one exists, and either way [applyGender] finishes with a strong
-     * pitch/rate shift (not a token nudge) so personas are still clearly
-     * distinguishable even when stuck sharing the one on-device voice.
+     * Steers the TTS engine towards [persona]'s voice: pick a voice matching
+     * the persona's gender where the engine has one (some engines name their
+     * voices with a "female"/"male" hint, e.g. "en-us-x-sfg#female_1-local"),
+     * then apply the persona's own pitch/rate tuning on top so all five
+     * personas sound distinct — even on modern devices (recent Pixels
+     * included) that ship a single unlabeled local voice per language, where
+     * the gender match fails and pitch/rate is all the differentiation there
+     * is. When a gender-matched voice IS found, the persona shift is applied
+     * at half strength (the voice itself already carries the gender).
      * Every call resets to [defaultVoice] first so a previous persona's
      * explicitly-matched voice never lingers onto the next one.
      */
-    fun applyGender(gender: VoiceGender) {
+    fun applyPersona(persona: Persona) {
         if (!isReady) {
-            pendingGender = gender
+            pendingPersona = persona
             return
         }
-        val matched = findVoiceForGender(gender)
+        val matched = findVoiceForGender(persona.gender)
         if (matched != null) {
-            AppLogger.i(TAG, "applyGender($gender): matched voice \"${matched.name}\"")
+            AppLogger.i(TAG, "applyPersona(${persona.id}): matched voice \"${matched.name}\"")
             tts.voice = matched
-            tts.setPitch(1.0f)
-            tts.setSpeechRate(1.0f)
+            tts.setPitch(1.0f + (persona.voicePitch - 1.0f) * 0.5f)
+            tts.setSpeechRate(1.0f + (persona.voiceRate - 1.0f) * 0.5f)
         } else {
-            AppLogger.i(TAG, "applyGender($gender): no distinct voice found, using pitch/rate shift")
+            AppLogger.i(TAG, "applyPersona(${persona.id}): no distinct voice, pitch=${persona.voicePitch} rate=${persona.voiceRate}")
             tts.voice = defaultVoice
-            if (gender == VoiceGender.FEMALE) {
-                tts.setPitch(1.25f)
-                tts.setSpeechRate(1.05f)
-            } else {
-                tts.setPitch(0.78f)
-                tts.setSpeechRate(0.95f)
-            }
+            tts.setPitch(persona.voicePitch)
+            tts.setSpeechRate(persona.voiceRate)
         }
     }
 
