@@ -9,6 +9,7 @@ import com.jarvis.assistant.model.VoiceGender
 import com.jarvis.assistant.util.AppLogger
 import java.util.Locale
 import java.util.UUID
+import kotlin.random.Random
 
 private const val TAG = "TextToSpeech"
 
@@ -19,6 +20,15 @@ class TextToSpeechManager(context: Context) {
     private var pendingText: String? = null
     private var pendingPersona: Persona? = null
     private var onSpeakingChanged: (Boolean) -> Unit = {}
+
+    // The persona currently applied, and whether a real gender-matched voice
+    // was found for it — [speak]'s per-sentence wobble needs both so it can
+    // center itself on the pitch/rate baseline that's actually playing.
+    private var activePersona: Persona? = null
+    private var usingMatchedVoice = false
+
+    /** ID of the final queued utterance of the current reply; see the progress listener. */
+    private var lastUtteranceId: String? = null
 
     // The engine's own default voice, captured once at startup before any
     // persona is applied. Needed so the pitch-only fallback in [applyPersona]
@@ -48,7 +58,14 @@ class TextToSpeechManager(context: Context) {
     init {
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) = onSpeakingChanged(true)
-            override fun onDone(utteranceId: String?) = onSpeakingChanged(false)
+
+            // A reply is spoken as several queued sentence utterances (see
+            // [speak]), so "done" only means done when the LAST one of the
+            // batch finishes — otherwise the mic would re-arm mid-sentence.
+            override fun onDone(utteranceId: String?) {
+                if (utteranceId == null || utteranceId == lastUtteranceId) onSpeakingChanged(false)
+            }
+
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 AppLogger.e(TAG, "Utterance error")
@@ -79,7 +96,9 @@ class TextToSpeechManager(context: Context) {
             pendingPersona = persona
             return
         }
+        activePersona = persona
         val matched = findVoiceForGender(persona.gender)
+        usingMatchedVoice = matched != null
         if (matched != null) {
             AppLogger.i(TAG, "applyPersona(${persona.id}): matched voice \"${matched.name}\"")
             tts.voice = matched
@@ -133,17 +152,71 @@ class TextToSpeechManager(context: Context) {
         }
     }
 
+    /**
+     * Speaks [text] as a series of queued sentence-sized utterances rather
+     * than one long block, with a small random pitch/rate wobble around the
+     * active persona's baseline on each. A single flat utterance is what
+     * makes long TTS replies drone; per-sentence variation reads as someone
+     * actually talking. The wobble is deliberately small (±4%) — enough to
+     * animate the delivery, not enough to sound like a different character
+     * mid-reply.
+     */
     fun speak(text: String) {
         if (text.isBlank()) return
         if (!isReady) {
             pendingText = text
             return
         }
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+        val sentences = splitIntoSentences(text)
+        if (sentences.isEmpty()) return
+
+        val basePitch = activePersona?.voicePitch ?: 1f
+        val baseRate = activePersona?.voiceRate ?: 1f
+        // If a gender-matched voice is in use, applyPersona() halved the
+        // persona shift; mirror that here so the wobble stays centered on
+        // whatever baseline is actually playing.
+        val strength = if (usingMatchedVoice) 0.5f else 1f
+        val centerPitch = 1f + (basePitch - 1f) * strength
+        val centerRate = 1f + (baseRate - 1f) * strength
+
+        sentences.forEachIndexed { index, sentence ->
+            val id = UUID.randomUUID().toString()
+            lastUtteranceId = id
+            tts.setPitch((centerPitch * (0.96f + Random.nextFloat() * 0.08f)).coerceIn(0.5f, 2f))
+            tts.setSpeechRate((centerRate * (0.97f + Random.nextFloat() * 0.06f)).coerceIn(0.5f, 2f))
+            val mode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+            tts.speak(sentence, mode, null, id)
+        }
+    }
+
+    /**
+     * Splits on sentence-ending punctuation, then merges any fragment under
+     * ~25 characters into the next one — otherwise "Yes." or "OK." become
+     * their own utterances and the queue gaps make the delivery stutter.
+     */
+    private fun splitIntoSentences(text: String): List<String> {
+        val rough = Regex("(?<=[.!?])\\s+").split(text.trim()).filter { it.isNotBlank() }
+        if (rough.size <= 1) return rough
+        val merged = mutableListOf<String>()
+        var buffer = StringBuilder()
+        for (part in rough) {
+            buffer.append(if (buffer.isEmpty()) part else " $part")
+            if (buffer.length >= 25) {
+                merged += buffer.toString()
+                buffer = StringBuilder()
+            }
+        }
+        if (buffer.isNotEmpty()) {
+            if (merged.isEmpty()) merged += buffer.toString()
+            else merged[merged.lastIndex] = merged.last() + " " + buffer.toString()
+        }
+        return merged
     }
 
     fun stop() {
+        lastUtteranceId = null
         tts.stop()
+        onSpeakingChanged(false)
     }
 
     fun shutdown() {

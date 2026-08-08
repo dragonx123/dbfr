@@ -25,6 +25,9 @@ import com.jarvis.assistant.model.Sender
 import com.jarvis.assistant.util.AppLogger
 import com.jarvis.assistant.voice.SpeechToText
 import com.jarvis.assistant.voice.TextToSpeechManager
+import com.jarvis.assistant.voice.VoiceSessionCommand
+import com.jarvis.assistant.voice.VoiceSessionEvents
+import com.jarvis.assistant.voice.VoiceSessionService
 import com.jarvis.assistant.voice.WakeWordEvents
 import com.jarvis.assistant.voice.WakeWordService
 import kotlinx.coroutines.Dispatchers
@@ -153,18 +156,44 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var wasWakeWordEnabledBeforeVoiceMode = false
     private var consecutiveVoiceModeErrors = 0
 
+    /** True between "user interrupted the reply" and that interruption being sent. */
+    private var bargeInTriggered = false
+
+    /** What Jarvis is currently saying aloud — used to reject the mic hearing itself. */
+    private var currentlySpokenText = ""
+
     // ------------------------------------------------------------------------------
 
     init {
+        // Note: these callbacks arrive on the TTS engine's own thread, and
+        // SpeechRecognizer must be driven from the main thread — hence the
+        // viewModelScope hop (Dispatchers.Main.immediate) before touching it.
         tts.setOnSpeakingChanged { speaking ->
+            val wasSpeaking = _isSpeaking.value
             _isSpeaking.value = speaking
-            if (!speaking) {
-                // Reset to the persisted persona's voice after every utterance, so a
-                // Settings preview (which temporarily swaps the voice) never leaks
-                // into actual chat replies if the user backs out without saving.
-                tts.applyPersona(backendSettings.persona)
-                if (_voiceModeActive.value && !_voiceModeMuted.value) {
-                    armMicAfterCooldown()
+            viewModelScope.launch {
+                when {
+                    // A reply is several queued sentence utterances, so only the
+                    // first onStart of a batch should arm the barge-in listener —
+                    // restarting it per sentence would keep killing the
+                    // recognition that's mid-way through capturing the user.
+                    speaking && !wasSpeaking -> {
+                        if (_voiceModeActive.value && !_voiceModeMuted.value) {
+                            startVoiceInputForVoiceMode(bargeIn = true)
+                        }
+                    }
+                    !speaking && wasSpeaking -> {
+                        // Reset to the persisted persona's voice after every reply, so a
+                        // Settings preview (which temporarily swaps the voice) never leaks
+                        // into actual chat replies if the user backs out without saving.
+                        tts.applyPersona(backendSettings.persona)
+                        // After a barge-in the recognizer is already mid-utterance
+                        // capturing the interruption; re-arming would cut it off.
+                        if (_voiceModeActive.value && !_voiceModeMuted.value && !bargeInTriggered) {
+                            armMicAfterCooldown()
+                        }
+                        bargeInTriggered = false
+                    }
                 }
             }
         }
@@ -179,6 +208,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     startVoiceInput()
                 }
             }
+        }
+
+        // Mute/End buttons on the background voice-session notification.
+        viewModelScope.launch {
+            VoiceSessionEvents.events.collect { command ->
+                when (command) {
+                    VoiceSessionCommand.TOGGLE_MUTE -> toggleVoiceModeMute()
+                    VoiceSessionCommand.END -> exitVoiceMode()
+                }
+            }
+        }
+
+        // Keep the background notification's text in step with the session.
+        viewModelScope.launch {
+            combine(orbPhase, isVoiceModeMuted) { phase, muted -> phase to muted }
+                .collect { (phase, muted) ->
+                    if (_voiceModeActive.value) updateVoiceSessionNotification(phase, muted)
+                }
         }
     }
 
@@ -239,6 +286,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _voiceModeError.value = null
         _voiceModeMuted.value = false
         _voiceModeActive.value = true
+        // Foreground service with the microphone type: without it Android 12+
+        // cuts the recognizer off as soon as the app stops being visible, so
+        // this is what actually lets the conversation continue in the
+        // background / with the screen off.
+        val app = getApplication<Application>()
+        runCatching { app.startForegroundService(Intent(app, VoiceSessionService::class.java)) }
+            .onFailure { AppLogger.e(TAG, "Couldn't start background voice service", it) }
         startVoiceInputForVoiceMode()
     }
 
@@ -247,16 +301,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (!_voiceModeActive.value) return
         voiceModeCooldownJob?.cancel()
         voiceModeCooldownJob = null
+        // Clear the active flag *before* stopping TTS: tts.stop() reports
+        // "no longer speaking" synchronously, and the handler for that
+        // re-arms the mic while voice mode still looks active.
+        _voiceModeActive.value = false
         stopVoiceInput()
         tts.stop()
-        _voiceModeActive.value = false
         _voiceModeMuted.value = false
         _voiceModeCooldown.value = false
         _voiceModePartialTranscript.value = ""
         _voiceModeError.value = null
+        bargeInTriggered = false
         _ttsEnabled.value = wasTtsEnabledBeforeVoiceMode
+        val app = getApplication<Application>()
+        app.stopService(Intent(app, VoiceSessionService::class.java))
         if (wasWakeWordEnabledBeforeVoiceMode) {
-            val app = getApplication<Application>()
             app.startForegroundService(Intent(app, WakeWordService::class.java))
         }
     }
@@ -278,6 +337,41 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Distinguishes the user actually cutting in from the microphone simply
+     * picking up the phone's own speaker. Two cheap signals, no extra
+     * hardware support needed (Android gives no "is this my own output"
+     * API): an interruption is at least two words, and its words are not
+     * mostly already present in whatever Jarvis is currently saying.
+     */
+    private fun isRealInterruption(text: String): Boolean {
+        val words = text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.size < 2) return false
+        val spoken = currentlySpokenText.lowercase()
+        if (spoken.isBlank()) return true
+        val echoed = words.count { spoken.contains(it.lowercase()) }
+        return echoed.toFloat() / words.size < 0.6f
+    }
+
+    private fun updateVoiceSessionNotification(phase: OrbPhase, muted: Boolean) {
+        val label = when (phase) {
+            OrbPhase.LISTENING -> "Listening…"
+            OrbPhase.THINKING -> "Thinking…"
+            OrbPhase.SPEAKING -> "Speaking…"
+            OrbPhase.MUTED -> "Muted"
+            OrbPhase.COOLDOWN, OrbPhase.IDLE -> "Ready"
+        }
+        val app = getApplication<Application>()
+        runCatching {
+            app.startService(
+                Intent(app, VoiceSessionService::class.java)
+                    .setAction(VoiceSessionService.ACTION_UPDATE_STATE)
+                    .putExtra(VoiceSessionService.EXTRA_STATE_LABEL, label)
+                    .putExtra(VoiceSessionService.EXTRA_MUTED, muted)
+            )
+        }
+    }
+
     private fun armMicAfterCooldown() {
         voiceModeCooldownJob?.cancel()
         voiceModeCooldownJob = viewModelScope.launch {
@@ -290,7 +384,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun startVoiceInputForVoiceMode() {
+    /**
+     * Starts the voice-mode recognizer. With [bargeIn] the mic runs *while*
+     * Jarvis is still speaking, so the user can cut in mid-sentence the way
+     * they can with Gemini or ChatGPT voice; the first partial result that
+     * looks like a genuine interruption (rather than the mic picking up the
+     * phone's own speaker) stops playback and becomes the next turn.
+     */
+    private fun startVoiceInputForVoiceMode(bargeIn: Boolean = false) {
         if (!speechToText.isAvailable()) {
             _voiceModeError.value = "Speech recognition isn't available on this device."
             _voiceModeMuted.value = true
@@ -300,18 +401,45 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         speechToText.startListening(
             onPartialResult = { text ->
                 consecutiveVoiceModeErrors = 0
-                _voiceModePartialTranscript.value = text
+                if (bargeIn && _isSpeaking.value) {
+                    if (isRealInterruption(text)) {
+                        AppLogger.i(TAG, "Barge-in: \"$text\" — stopping playback")
+                        bargeInTriggered = true
+                        tts.stop()
+                        _voiceModePartialTranscript.value = text
+                    }
+                    // Otherwise it's almost certainly the mic hearing the reply
+                    // being spoken — don't show it as the user's transcript.
+                } else {
+                    _voiceModePartialTranscript.value = text
+                }
             },
             onListeningChanged = { _isListening.value = it },
             onFinalResult = { text ->
                 consecutiveVoiceModeErrors = 0
                 _voiceModePartialTranscript.value = ""
+                // A final result from the barge-in listener that never qualified
+                // as an interruption is echo of Jarvis's own voice — dropping it
+                // stops the assistant from answering itself in a loop.
+                if (bargeIn && !bargeInTriggered && !isRealInterruption(text)) {
+                    AppLogger.i(TAG, "Ignoring echo of spoken reply: \"${text.take(40)}\"")
+                    return@startListening
+                }
+                bargeInTriggered = false
+                if (_isSpeaking.value) tts.stop()
                 sendMessage(text)
             },
             onError = { message ->
-                AppLogger.w(TAG, "Voice mode speech error: $message")
                 _isListening.value = false
                 if (!_voiceModeActive.value || _voiceModeMuted.value) return@startListening
+                // "No speech" while Jarvis is still talking just means the user
+                // didn't interrupt — expected, so restart quietly without
+                // counting it toward the give-up threshold.
+                if (bargeIn && _isSpeaking.value) {
+                    startVoiceInputForVoiceMode(bargeIn = true)
+                    return@startListening
+                }
+                AppLogger.w(TAG, "Voice mode speech error: $message")
                 consecutiveVoiceModeErrors++
                 if (consecutiveVoiceModeErrors >= MAX_CONSECUTIVE_VOICE_MODE_ERRORS) {
                     // Stop auto-retrying on a real, persistent problem (e.g. permission
@@ -489,7 +617,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             _isGenerating.value = false
             updateMessage(replyId, finalText, isStreaming = false)
-            if (_ttsEnabled.value) tts.speak(finalText)
+            if (_ttsEnabled.value) {
+                currentlySpokenText = finalText
+                tts.speak(finalText)
+            }
             // A stall likely means the underlying engine/conversation (most
             // plausible on-device, e.g. wedged mid tool-call) won't recover on
             // its own — reconnect so the next message gets a fresh one rather
@@ -613,6 +744,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         speechToText.stopListening()
         tts.shutdown()
         backend?.close()
+        val app = getApplication<Application>()
+        app.stopService(Intent(app, VoiceSessionService::class.java))
     }
 
     companion object {

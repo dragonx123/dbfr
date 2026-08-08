@@ -59,6 +59,13 @@
             android:foregroundServiceType="microphone"
             android:exported="false" />
 
+        <!-- Keeps a voice conversation running (and the mic usable) while the
+             app is backgrounded or the screen is off. See VoiceSessionService. -->
+        <service
+            android:name=".voice.VoiceSessionService"
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
+
     </application>
 
 </manifest>
