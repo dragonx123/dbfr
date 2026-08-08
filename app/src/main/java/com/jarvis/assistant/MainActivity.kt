@@ -22,6 +22,7 @@ import com.jarvis.assistant.ui.ChatViewModel
 import com.jarvis.assistant.ui.CrashReportDialog
 import com.jarvis.assistant.ui.InstructionsScreen
 import com.jarvis.assistant.ui.LogsScreen
+import com.jarvis.assistant.ui.MemoryScreen
 import com.jarvis.assistant.ui.SettingsScreen
 import com.jarvis.assistant.ui.VoiceModeScreen
 import com.jarvis.assistant.ui.orbColor
@@ -29,7 +30,7 @@ import com.jarvis.assistant.ui.theme.JarvisTheme
 import com.jarvis.assistant.util.AppLogger
 import com.jarvis.assistant.util.CrashReporter
 
-private enum class Screen { CHAT, SETTINGS, VOICE_MODE, LOGS, INSTRUCTIONS }
+private enum class Screen { CHAT, SETTINGS, VOICE_MODE, LOGS, INSTRUCTIONS, MEMORY }
 
 class MainActivity : ComponentActivity() {
 
@@ -86,6 +87,7 @@ class MainActivity : ComponentActivity() {
                 val cloudApiKey by viewModel.cloudApiKey.collectAsState()
                 val cloudModel by viewModel.cloudModel.collectAsState()
                 val cloudBaseUrl by viewModel.cloudBaseUrl.collectAsState()
+                val memories by viewModel.memories.collectAsState()
 
                 when (screen) {
                     Screen.SETTINGS -> SettingsScreen(
@@ -100,10 +102,9 @@ class MainActivity : ComponentActivity() {
                         onSave = viewModel::updateSettings,
                         onPreviewVoice = viewModel::previewVoice,
                         onOpenLogs = { screen = Screen.LOGS },
-                        onOpenInstructions = {
-                            viewModel.refreshLearnedFacts()
-                            screen = Screen.INSTRUCTIONS
-                        },
+                        onOpenInstructions = { screen = Screen.INSTRUCTIONS },
+                        onOpenMemory = { screen = Screen.MEMORY },
+                        memoryCount = memories.size,
                         onOpenAccessibilitySettings = {
                             runCatching {
                                 startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -113,15 +114,19 @@ class MainActivity : ComponentActivity() {
                         onBack = { screen = Screen.CHAT },
                     )
 
+                    Screen.MEMORY -> MemoryScreen(
+                        memories = memories,
+                        onAdd = viewModel::addMemoryManually,
+                        onForget = viewModel::forgetMemory,
+                        onForgetAll = viewModel::forgetAllMemories,
+                        onBack = { screen = Screen.SETTINGS },
+                    )
+
                     Screen.INSTRUCTIONS -> {
                         val instructions by viewModel.customInstructions.collectAsState()
-                        val facts by viewModel.learnedFacts.collectAsState()
                         InstructionsScreen(
                             initialInstructions = instructions,
-                            facts = facts,
                             onSave = viewModel::saveCustomInstructions,
-                            onDeleteFact = viewModel::deleteLearnedFact,
-                            onClearFacts = viewModel::clearLearnedFacts,
                             onBack = { screen = Screen.SETTINGS },
                         )
                     }
@@ -214,6 +219,7 @@ class MainActivity : ComponentActivity() {
                             viewModel.enterVoiceMode()
                             screen = Screen.VOICE_MODE
                         },
+                        onNewConversation = viewModel::clearConversation,
                     )
                 }
 

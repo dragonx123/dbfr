@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -77,6 +78,7 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onOpenVoiceMode: () -> Unit,
     onSendWithScreen: (String) -> Unit,
+    onNewConversation: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -105,6 +107,13 @@ fun ChatScreen(
                                 if (ttsEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
                                 contentDescription = "Toggle spoken replies",
                             )
+                        }
+                        // Conversations persist across restarts now, so there
+                        // has to be a way to deliberately start fresh.
+                        if (modelState is ModelState.Ready && messages.isNotEmpty()) {
+                            IconButton(onClick = onNewConversation) {
+                                Icon(Icons.Filled.Add, contentDescription = "New conversation")
+                            }
                         }
                         IconButton(onClick = onOpenSettings) {
                             Icon(Icons.Filled.Settings, contentDescription = "Settings")

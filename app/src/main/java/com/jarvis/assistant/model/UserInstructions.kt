@@ -4,16 +4,14 @@ import android.content.Context
 import org.json.JSONArray
 
 /**
- * The user's own standing instructions plus anything they've taught Jarvis
- * — appended to whichever persona's system prompt is active, on every
- * backend. This is the "teach / instruct / learn" surface: [customInstructions]
- * is free text the user writes in Settings, while [facts] accumulates
- * one-liners the model saves for itself when the user says "remember that…"
- * (see the rememberFact tool in `tools/JarvisTools.kt`).
+ * The user's standing instructions: free text they write in Settings, which
+ * is appended to whichever persona's system prompt is active, on every
+ * backend. This is the "how should you behave" half of teaching Jarvis.
  *
- * Deliberately simple persistence — SharedPreferences with a JSON array —
- * because this is at most a few dozen short strings, and it needs to be
- * readable synchronously from prompt-assembly code on any thread.
+ * The "what do you know about me" half is
+ * [com.jarvis.assistant.memory.MemoryStore] — that one is retrieved
+ * per-message rather than pinned into every prompt, since it grows without
+ * bound and only a few entries matter to any given turn.
  */
 class UserInstructions(context: Context) {
 
@@ -25,33 +23,19 @@ class UserInstructions(context: Context) {
         get() = prefs.getString(KEY_CUSTOM, "") ?: ""
         set(value) = prefs.edit().putString(KEY_CUSTOM, value.trim()).apply()
 
-    /** Short facts the user has taught Jarvis, newest last. */
-    var facts: List<String>
-        get() = runCatching {
-            val array = JSONArray(prefs.getString(KEY_FACTS, "[]"))
+    /**
+     * Facts saved before memory moved to `MemoryStore`, drained on first run
+     * so nothing the user taught the previous build is lost. Returns them and
+     * clears the old key; empty on every subsequent launch.
+     */
+    fun drainLegacyFacts(): List<String> {
+        val stored = prefs.getString(KEY_FACTS, null) ?: return emptyList()
+        val facts = runCatching {
+            val array = JSONArray(stored)
             (0 until array.length()).map { array.getString(it) }
         }.getOrDefault(emptyList())
-        set(value) {
-            val trimmed = value.map { it.trim() }.filter { it.isNotBlank() }.takeLast(MAX_FACTS)
-            prefs.edit().putString(KEY_FACTS, JSONArray(trimmed).toString()).apply()
-        }
-
-    /** Returns false if the fact was already known (case-insensitive). */
-    fun addFact(fact: String): Boolean {
-        val clean = fact.trim()
-        if (clean.isBlank()) return false
-        val existing = facts
-        if (existing.any { it.equals(clean, ignoreCase = true) }) return false
-        facts = existing + clean
-        return true
-    }
-
-    fun removeFact(fact: String) {
-        facts = facts.filterNot { it == fact }
-    }
-
-    fun clearFacts() {
-        facts = emptyList()
+        prefs.edit().remove(KEY_FACTS).apply()
+        return facts
     }
 
     /**
@@ -60,27 +44,14 @@ class UserInstructions(context: Context) {
      */
     fun promptBlock(): String {
         val instructions = customInstructions
-        val knownFacts = facts
-        if (instructions.isBlank() && knownFacts.isEmpty()) return ""
-        return buildString {
-            append("\n\n")
-            if (instructions.isNotBlank()) {
-                appendLine("Standing instructions from the user — follow these in every reply:")
-                appendLine(instructions)
-            }
-            if (knownFacts.isNotEmpty()) {
-                appendLine()
-                appendLine("Things the user has taught you. Treat these as true and use them when relevant:")
-                knownFacts.forEach { appendLine("- $it") }
-            }
-        }.trimEnd()
+        if (instructions.isBlank()) return ""
+        return "\n\nStanding instructions from the user — follow these in every reply:\n$instructions"
     }
 
     companion object {
         private const val PREFS_NAME = "jarvis_user_instructions"
         private const val KEY_CUSTOM = "custom_instructions"
         private const val KEY_FACTS = "facts"
-        private const val MAX_FACTS = 100
 
         /**
          * Process-wide singleton. Tool implementations ([com.jarvis.assistant.tools.JarvisTools])

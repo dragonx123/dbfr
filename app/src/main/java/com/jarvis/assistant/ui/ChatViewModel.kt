@@ -14,6 +14,11 @@ import com.jarvis.assistant.ai.WebTools
 import com.jarvis.assistant.ai.parseToolDirective
 import com.jarvis.assistant.control.JarvisAccessibilityService
 import com.jarvis.assistant.control.ScreenCaptureManager
+import com.jarvis.assistant.memory.ConversationStore
+import com.jarvis.assistant.memory.Memory
+import com.jarvis.assistant.memory.MemoryExtractor
+import com.jarvis.assistant.memory.MemoryKind
+import com.jarvis.assistant.memory.MemoryStore
 import com.jarvis.assistant.model.BackendConfig
 import com.jarvis.assistant.model.BackendSettings
 import com.jarvis.assistant.model.BackendType
@@ -66,13 +71,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val modelRepository = ModelRepository(application)
     private val backendSettings = BackendSettings(application)
     private val userInstructions = UserInstructions.get(application)
+    private val memoryStore = MemoryStore.get(application)
+    private val conversationStore = ConversationStore(application)
     private val speechToText = SpeechToText(application)
     private val tts = TextToSpeechManager(application)
 
     private var backend: ChatBackend? = null
 
-    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    // Seeded from disk so closing the app no longer wipes the conversation.
+    private val _messages = MutableStateFlow<List<ChatMessage>>(conversationStore.load())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+
+    val memories: StateFlow<List<Memory>> = memoryStore.memories
 
     private val _modelState = MutableStateFlow<ModelState>(ModelState.NotSetUp)
     val modelState: StateFlow<ModelState> = _modelState.asStateFlow()
@@ -163,6 +173,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** True between "user interrupted the reply" and that interruption being sent. */
     private var bargeInTriggered = false
 
+    /**
+     * A recap of the visible transcript, queued for the next message after a
+     * (re)connect. Backends always start with empty history of their own, so
+     * without this Jarvis loses the thread on every app restart and backend
+     * switch even though the user can still see the conversation on screen.
+     */
+    private var pendingRecap = ""
+
     /** What Jarvis is currently saying aloud — used to reject the mic hearing itself. */
     private var currentlySpokenText = ""
 
@@ -202,6 +220,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         tts.applyPersona(backendSettings.persona)
+        // One-time move of anything taught to the previous build, which kept
+        // facts in SharedPreferences before MemoryStore existed.
+        userInstructions.drainLegacyFacts().forEach { memoryStore.remember(it, MemoryKind.FACT) }
         initializeBackend()
 
         viewModelScope.launch {
@@ -537,7 +558,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _modelState.value = ModelState.Ready
                 val name = backendSettings.persona.displayName
                 AppLogger.i(TAG, "Backend connected ($name)")
-                postMessage(Sender.SYSTEM, "$name is ready. Ask me anything, or tell me to do something on your phone.")
+                // Hand the fresh backend the tail of the visible conversation
+                // on the next message, so it picks up where the user left off.
+                pendingRecap = conversationStore.recapBlock(_messages.value)
+                val greeting = if (_messages.value.any { it.sender != Sender.SYSTEM }) {
+                    "$name is back. Picking up where you left off."
+                } else {
+                    "$name is ready. Ask me anything, or tell me to do something on your phone."
+                }
+                postMessage(Sender.SYSTEM, greeting)
             }.onFailure {
                 AppLogger.e(TAG, "Backend connect failed", it)
                 _modelState.value = ModelState.Error(it.message ?: "Failed to connect")
@@ -579,13 +608,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val replyId = UUID.randomUUID().toString()
         _messages.value = _messages.value + ChatMessage(replyId, Sender.JARVIS, "", isStreaming = true)
 
+        // Anything durable the user just said gets saved before the reply is
+        // generated, so "remember X" then "what's X?" works in one breath.
+        captureMemories(text)
+
         // The JSON tool-directive loop only applies to the text-protocol
         // backends; on-device uses LiteRT's native @Tool calls internally.
         val toolLoopEnabled = backendSettings.backendType != BackendType.ON_DEVICE
 
         viewModelScope.launch {
             _isGenerating.value = true
-            var prompt = text
+            // Relevant memories ride along with this turn rather than living
+            // in the system prompt: the prompt is fixed when the backend
+            // connects, but what's worth recalling changes every message.
+            var prompt = memoryStore.recallBlock(text) + pendingRecap + text
+            pendingRecap = ""
             var hops = 0
             var finalText = ""
             var stalled = false
@@ -648,18 +685,41 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // -- Memory --------------------------------------------------------------------
+
+    /**
+     * Saves anything durable from the user's message. The model can also
+     * store memories itself (the rememberFact tool / remember directive),
+     * but small on-device models call tools unreliably, so this pattern-based
+     * pass runs on every backend as a backstop — see [MemoryExtractor].
+     */
+    private fun captureMemories(userText: String) {
+        MemoryExtractor.extract(userText).forEach { (text, kind) ->
+            memoryStore.remember(text, kind)
+        }
+    }
+
+    fun forgetMemory(id: String) = memoryStore.forget(id)
+
+    fun forgetAllMemories() = memoryStore.forgetAll()
+
+    fun addMemoryManually(text: String) {
+        memoryStore.remember(text, MemoryKind.FACT)
+    }
+
+    /** Wipes the saved transcript and starts a clean conversation. */
+    fun clearConversation() {
+        _messages.value = emptyList()
+        conversationStore.clear()
+        pendingRecap = ""
+        AppLogger.i(TAG, "Conversation cleared — reconnecting for a clean slate")
+        initializeBackend()
+    }
+
     // -- Instructions & memory -----------------------------------------------------
 
     private val _customInstructions = MutableStateFlow(userInstructions.customInstructions)
     val customInstructions: StateFlow<String> = _customInstructions.asStateFlow()
-
-    private val _learnedFacts = MutableStateFlow(userInstructions.facts)
-    val learnedFacts: StateFlow<List<String>> = _learnedFacts.asStateFlow()
-
-    /** Re-reads facts the model saved itself via its rememberFact tool. */
-    fun refreshLearnedFacts() {
-        _learnedFacts.value = userInstructions.facts
-    }
 
     fun saveCustomInstructions(text: String) {
         if (text == userInstructions.customInstructions) return
@@ -668,18 +728,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         AppLogger.i(TAG, "Custom instructions updated — reconnecting backend")
         // The instructions live in the system prompt, which is fixed at
         // connect time on every backend, so this needs a reconnect to apply.
-        initializeBackend()
-    }
-
-    fun deleteLearnedFact(fact: String) {
-        userInstructions.removeFact(fact)
-        _learnedFacts.value = userInstructions.facts
-        initializeBackend()
-    }
-
-    fun clearLearnedFacts() {
-        userInstructions.clearFacts()
-        _learnedFacts.value = userInstructions.facts
         initializeBackend()
     }
 
@@ -794,6 +842,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         card to prompt
                     }
 
+                    "remember" -> {
+                        val fact = directive.query.orEmpty()
+                        val saved = memoryStore.remember(fact, MemoryKind.FACT)
+                        null to if (saved != null) {
+                            "[TOOL RESULT — remember] Saved. Now reply to the user normally, " +
+                                "acknowledging it briefly and in character."
+                        } else {
+                            "[TOOL RESULT — remember] Already known. Reply to the user normally."
+                        }
+                    }
+
                     else -> null to "[TOOL ERROR] Unknown tool \"${directive.tool}\". " +
                         "Answer from your own knowledge, without tool directives."
                 }
@@ -852,6 +911,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _messages.value = _messages.value.map {
             if (it.id == id) it.copy(text = text, isStreaming = isStreaming) else it
         }
+        // Persist once a reply has settled, not on every streamed token.
+        if (!isStreaming) conversationStore.save(_messages.value)
     }
 
     override fun onCleared() {
@@ -898,6 +959,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             You will receive the results in the next message; then answer the
             user's question normally. Never invent live data, and never claim
             to be "checking" something without emitting a tool line.
+
+            You also have long-term memory. To save something about the user
+            worth knowing in future conversations, use the same format:
+            {"tool":"remember","query":"<one short sentence>"}
+            Memories relevant to the current message are given to you
+            automatically at the top of it — use them naturally, and don't
+            announce that you're remembering or recalling.
         """.trimIndent()
     }
 }

@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.VolumeUp
@@ -102,6 +103,8 @@ fun SettingsScreen(
     onPreviewVoice: (Persona) -> Unit,
     onOpenLogs: () -> Unit,
     onOpenInstructions: () -> Unit,
+    onOpenMemory: () -> Unit,
+    memoryCount: Int,
     onOpenAccessibilitySettings: () -> Unit,
     screenControlEnabled: Boolean,
     onBack: () -> Unit,
@@ -343,8 +346,14 @@ fun SettingsScreen(
             Spacer(Modifier.height(12.dp))
             LinkCard(
                 icon = Icons.Filled.School,
-                label = "Instructions & memory",
+                label = "Standing instructions",
                 onClick = onOpenInstructions,
+            )
+            Spacer(Modifier.height(8.dp))
+            LinkCard(
+                icon = Icons.Filled.Psychology,
+                label = if (memoryCount == 0) "Memory" else "Memory · $memoryCount remembered",
+                onClick = onOpenMemory,
             )
 
             Spacer(Modifier.height(24.dp))

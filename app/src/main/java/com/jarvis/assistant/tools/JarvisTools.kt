@@ -14,7 +14,8 @@ import com.google.ai.edge.litertlm.ToolParam
 import com.google.ai.edge.litertlm.ToolSet
 import com.jarvis.assistant.ai.WebTools
 import com.jarvis.assistant.control.JarvisAccessibilityService
-import com.jarvis.assistant.model.UserInstructions
+import com.jarvis.assistant.memory.MemoryKind
+import com.jarvis.assistant.memory.MemoryStore
 import com.jarvis.assistant.util.AppLogger
 import java.util.Date
 
@@ -268,15 +269,29 @@ class JarvisTools(private val context: Context) : ToolSet {
     ): String = JarvisAccessibilityService.scroll(direction)
 
     @Tool(
-        description = "Save a fact about the user so you remember it in future conversations. " +
-            "Use when the user says to remember something, or tells you a lasting preference."
+        description = "Save something about the user to long-term memory so you still know it " +
+            "in future conversations. Use when the user asks you to remember something, or " +
+            "tells you a lasting fact or preference about themselves."
     )
     fun rememberFact(
         @ToolParam(description = "The fact, written as one short standalone sentence.") fact: String
     ): String {
         AppLogger.i(TAG, "rememberFact(\"$fact\")")
-        val added = UserInstructions.get(context).addFact(fact)
-        return if (added) "Saved: \"$fact\"" else "I already knew that."
+        val saved = MemoryStore.get(context).remember(fact, MemoryKind.FACT)
+        return if (saved != null) "Saved to memory: \"$fact\"" else "I already knew that."
+    }
+
+    @Tool(
+        description = "Search your long-term memory about the user. Use when the user refers to " +
+            "something from a past conversation, or asks what you remember about them."
+    )
+    fun recallMemories(
+        @ToolParam(description = "What to look for, e.g. 'dog' or 'work schedule'.") query: String
+    ): String {
+        AppLogger.i(TAG, "recallMemories(\"$query\")")
+        val hits = MemoryStore.get(context).recall(query)
+        return if (hits.isEmpty()) "Nothing in memory about that."
+        else hits.joinToString("\n") { "- ${it.text}" }
     }
 
     @Tool(description = "Open the phone's system settings app.")
