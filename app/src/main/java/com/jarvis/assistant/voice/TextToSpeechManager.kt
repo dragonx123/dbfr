@@ -16,7 +16,12 @@ class TextToSpeechManager(context: Context) {
     private var pendingGender: VoiceGender? = null
     private var onSpeakingChanged: (Boolean) -> Unit = {}
 
-    private val tts = TextToSpeech(context.applicationContext) { status ->
+    // Explicit type annotation needed: the init lambda below references `tts` on
+    // itself (to set the language once ready), and without a declared type here
+    // that self-reference sends the compiler into a recursive type-inference loop
+    // ("Unresolved reference 'language'") trying to resolve tts's type from an
+    // initializer that itself depends on tts's type.
+    private val tts: TextToSpeech = TextToSpeech(context.applicationContext) { status ->
         isReady = status == TextToSpeech.SUCCESS
         if (isReady) {
             tts.language = Locale.getDefault()

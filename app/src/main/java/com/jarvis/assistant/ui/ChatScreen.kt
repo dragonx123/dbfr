@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Send
@@ -67,12 +68,22 @@ fun ChatScreen(
     onToggleWakeWord: (Boolean) -> Unit,
     onPickModel: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenVoiceMode: () -> Unit,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(personaName) },
                 actions = {
+                    if (modelState is ModelState.Ready) {
+                        IconButton(onClick = onOpenVoiceMode) {
+                            Icon(
+                                Icons.Filled.GraphicEq,
+                                contentDescription = "Open voice mode",
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
                     IconButton(onClick = { onToggleWakeWord(!wakeWordEnabled) }) {
                         Icon(
                             Icons.Filled.SettingsVoice,

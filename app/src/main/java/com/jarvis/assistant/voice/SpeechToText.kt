@@ -23,6 +23,7 @@ class SpeechToText(private val context: Context) {
         onFinalResult: (String) -> Unit,
         onError: (String) -> Unit = {},
         onListeningChanged: (Boolean) -> Unit = {},
+        onRmsChanged: (Float) -> Unit = {},
     ) {
         stopListening()
 
@@ -36,10 +37,16 @@ class SpeechToText(private val context: Context) {
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
         }
 
+        // Captured under a different name than the RecognitionListener method below:
+        // both share the exact same (Float) signature, so an inline reference from
+        // inside the override would resolve to itself (infinite recursion) rather
+        // than this outer callback.
+        val rmsListener = onRmsChanged
+
         newRecognizer.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) = onListeningChanged(true)
             override fun onBeginningOfSpeech() = Unit
-            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onRmsChanged(rmsdB: Float) = rmsListener(rmsdB)
             override fun onBufferReceived(buffer: ByteArray?) = Unit
             override fun onEndOfSpeech() = onListeningChanged(false)
 

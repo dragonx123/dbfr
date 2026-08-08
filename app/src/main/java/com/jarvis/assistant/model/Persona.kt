@@ -5,7 +5,11 @@ enum class VoiceGender { MALE, FEMALE }
 /**
  * A selectable assistant identity: a display name, a voice gender (used to
  * pick/approximate a matching TTS voice — see `voice/TextToSpeechManager.kt`),
- * and the system instruction that gives the model its personality.
+ * the system instruction that gives the model its personality, and a color
+ * for its voice-mode orb (see `ui/VoiceOrb.kt`). Kept plain-Kotlin (no
+ * Android/Compose types) so this model layer stays framework-agnostic —
+ * [orbColorArgb] is a packed 0xFFRRGGBB Long, converted to a Compose `Color`
+ * at the UI layer.
  */
 data class Persona(
     val id: String,
@@ -13,6 +17,7 @@ data class Persona(
     val gender: VoiceGender,
     val tagline: String,
     val systemInstruction: String,
+    val orbColorArgb: Long,
 )
 
 object Personas {
@@ -28,6 +33,7 @@ object Personas {
             butler-like tone. Keep replies short and natural — a sentence or
             two unless the user asks for detail.
         """.trimIndent(),
+        orbColorArgb = 0xFF00D1FF, // JARVIS HUD cyan-blue — the app's signature accent color
     )
 
     val FRIDAY = Persona(
@@ -41,6 +47,7 @@ object Personas {
             and to the point — a sentence or two unless the user asks for
             detail.
         """.trimIndent(),
+        orbColorArgb = 0xFF1DE9B6, // teal — same cool family as Jarvis, clearly distinct hue
     )
 
     val EDITH = Persona(
@@ -54,6 +61,7 @@ object Personas {
             trusted tactical advisor. Keep replies short and to the point
             unless the user asks for detail.
         """.trimIndent(),
+        orbColorArgb = 0xFFFF6D28, // orange-red — matches EDITH's HUD color in Far From Home
     )
 
     val VISION = Persona(
@@ -67,6 +75,7 @@ object Personas {
             considerately. Keep replies short and natural unless the user
             asks for detail.
         """.trimIndent(),
+        orbColorArgb = 0xFFFFC94A, // gold/amber — Vision's Mind Stone / forehead-gem color
     )
 
     val ULTRON = Persona(
@@ -80,6 +89,7 @@ object Personas {
             remain genuinely helpful, never hostile or harmful. Keep replies
             short and to the point unless the user asks for detail.
         """.trimIndent(),
+        orbColorArgb = 0xFFE0263E, // crimson — Ultron's red glowing-eye palette
     )
 
     val all = listOf(JARVIS, FRIDAY, EDITH, VISION, ULTRON)

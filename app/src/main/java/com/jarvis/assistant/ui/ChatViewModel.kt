@@ -18,9 +18,15 @@ import com.jarvis.assistant.voice.SpeechToText
 import com.jarvis.assistant.voice.TextToSpeechManager
 import com.jarvis.assistant.voice.WakeWordEvents
 import com.jarvis.assistant.voice.WakeWordService
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -74,13 +80,64 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _wakeWordEnabled = MutableStateFlow(false)
     val wakeWordEnabled: StateFlow<Boolean> = _wakeWordEnabled.asStateFlow()
 
+    // -- Full-screen voice mode --------------------------------------------------
+
+    private val _micLevel = MutableStateFlow(0f)
+    val micLevel: StateFlow<Float> = _micLevel.asStateFlow()
+
+    private val _voiceModeActive = MutableStateFlow(false)
+    private val _voiceModeMuted = MutableStateFlow(false)
+    private val _voiceModeCooldown = MutableStateFlow(false)
+
+    private val _voiceModePartialTranscript = MutableStateFlow("")
+    val voiceModePartialTranscript: StateFlow<String> = _voiceModePartialTranscript.asStateFlow()
+
+    private val _voiceModeError = MutableStateFlow<String?>(null)
+    val voiceModeError: StateFlow<String?> = _voiceModeError.asStateFlow()
+
+    val isVoiceModeMuted: StateFlow<Boolean> = _voiceModeMuted.asStateFlow()
+
+    /** The last assistant reply's text, for the voice-mode caption while thinking/speaking. */
+    val voiceModeReplyText: StateFlow<String> = messages
+        .map { list -> list.lastOrNull { it.sender == Sender.JARVIS }?.text.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    /** Derived, not hand-set, so it can never drift from the flows it's built on. */
+    private val voiceModeFlags = combine(_voiceModeActive, _voiceModeMuted, _voiceModeCooldown, ::Triple)
+
+    val orbPhase: StateFlow<OrbPhase> = combine(
+        voiceModeFlags, isListening, isGenerating, isSpeaking,
+    ) { (active, muted, cooldown), listening, generating, speaking ->
+        when {
+            !active -> OrbPhase.IDLE
+            muted -> OrbPhase.MUTED
+            speaking -> OrbPhase.SPEAKING
+            generating -> OrbPhase.THINKING
+            cooldown -> OrbPhase.COOLDOWN
+            listening -> OrbPhase.LISTENING
+            else -> OrbPhase.IDLE
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), OrbPhase.IDLE)
+
+    private var voiceModeCooldownJob: Job? = null
+    private var wasTtsEnabledBeforeVoiceMode = true
+    private var wasWakeWordEnabledBeforeVoiceMode = false
+    private var consecutiveVoiceModeErrors = 0
+
+    // ------------------------------------------------------------------------------
+
     init {
         tts.setOnSpeakingChanged { speaking ->
             _isSpeaking.value = speaking
-            // Reset to the persisted persona's voice after every utterance, so a
-            // Settings preview (which temporarily swaps the voice) never leaks
-            // into actual chat replies if the user backs out without saving.
-            if (!speaking) tts.applyGender(backendSettings.persona.gender)
+            if (!speaking) {
+                // Reset to the persisted persona's voice after every utterance, so a
+                // Settings preview (which temporarily swaps the voice) never leaks
+                // into actual chat replies if the user backs out without saving.
+                tts.applyGender(backendSettings.persona.gender)
+                if (_voiceModeActive.value && !_voiceModeMuted.value) {
+                    armMicAfterCooldown()
+                }
+            }
         }
         tts.applyGender(backendSettings.persona.gender)
         initializeBackend()
@@ -123,6 +180,113 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         tts.applyGender(previewPersona.gender)
         tts.speak("Hello, I'm ${previewPersona.displayName}.")
     }
+
+    // -- Voice mode ---------------------------------------------------------------
+
+    /** Enters full-screen voice mode and starts listening for the first turn. */
+    fun enterVoiceMode() {
+        if (_voiceModeActive.value) return
+        wasTtsEnabledBeforeVoiceMode = _ttsEnabled.value
+        wasWakeWordEnabledBeforeVoiceMode = _wakeWordEnabled.value
+        _ttsEnabled.value = true
+        if (_wakeWordEnabled.value) {
+            // Pause the background listener (without touching the user's saved
+            // preference) so it doesn't fight the foreground recognizer for the mic.
+            val app = getApplication<Application>()
+            app.stopService(Intent(app, WakeWordService::class.java))
+        }
+        consecutiveVoiceModeErrors = 0
+        _voiceModeError.value = null
+        _voiceModeMuted.value = false
+        _voiceModeActive.value = true
+        startVoiceInputForVoiceMode()
+    }
+
+    /** Leaves voice mode, stops listening/speaking, and restores prior TTS/wake-word state. */
+    fun exitVoiceMode() {
+        if (!_voiceModeActive.value) return
+        voiceModeCooldownJob?.cancel()
+        voiceModeCooldownJob = null
+        stopVoiceInput()
+        tts.stop()
+        _voiceModeActive.value = false
+        _voiceModeMuted.value = false
+        _voiceModeCooldown.value = false
+        _voiceModePartialTranscript.value = ""
+        _voiceModeError.value = null
+        _ttsEnabled.value = wasTtsEnabledBeforeVoiceMode
+        if (wasWakeWordEnabledBeforeVoiceMode) {
+            val app = getApplication<Application>()
+            app.startForegroundService(Intent(app, WakeWordService::class.java))
+        }
+    }
+
+    /** Mutes (stops listening/interrupts speech) or unmutes (resumes listening) voice mode. */
+    fun toggleVoiceModeMute() {
+        if (!_voiceModeActive.value) return
+        if (_voiceModeMuted.value) {
+            _voiceModeMuted.value = false
+            consecutiveVoiceModeErrors = 0
+            _voiceModeError.value = null
+            if (!_isGenerating.value && !_isSpeaking.value) startVoiceInputForVoiceMode()
+        } else {
+            _voiceModeMuted.value = true
+            voiceModeCooldownJob?.cancel()
+            _voiceModeCooldown.value = false
+            stopVoiceInput()
+            if (_isSpeaking.value) tts.stop()
+        }
+    }
+
+    private fun armMicAfterCooldown() {
+        voiceModeCooldownJob?.cancel()
+        voiceModeCooldownJob = viewModelScope.launch {
+            _voiceModeCooldown.value = true
+            delay(VOICE_MODE_COOLDOWN_MS)
+            _voiceModeCooldown.value = false
+            if (_voiceModeActive.value && !_voiceModeMuted.value) {
+                startVoiceInputForVoiceMode()
+            }
+        }
+    }
+
+    private fun startVoiceInputForVoiceMode() {
+        if (!speechToText.isAvailable()) {
+            _voiceModeError.value = "Speech recognition isn't available on this device."
+            _voiceModeMuted.value = true
+            return
+        }
+        _voiceModePartialTranscript.value = ""
+        speechToText.startListening(
+            onPartialResult = { text ->
+                consecutiveVoiceModeErrors = 0
+                _voiceModePartialTranscript.value = text
+            },
+            onListeningChanged = { _isListening.value = it },
+            onFinalResult = { text ->
+                consecutiveVoiceModeErrors = 0
+                _voiceModePartialTranscript.value = ""
+                sendMessage(text)
+            },
+            onError = { message ->
+                _isListening.value = false
+                if (!_voiceModeActive.value || _voiceModeMuted.value) return@startListening
+                consecutiveVoiceModeErrors++
+                if (consecutiveVoiceModeErrors >= MAX_CONSECUTIVE_VOICE_MODE_ERRORS) {
+                    // Stop auto-retrying on a real, persistent problem (e.g. permission
+                    // revoked) rather than looping forever — surface it and pause;
+                    // the user can tap unmute once they've fixed it.
+                    _voiceModeError.value = message
+                    _voiceModeMuted.value = true
+                } else {
+                    startVoiceInputForVoiceMode()
+                }
+            },
+            onRmsChanged = { rmsDb -> _micLevel.value = ((rmsDb + 2f) / 12f).coerceIn(0f, 1f) },
+        )
+    }
+
+    // -------------------------------------------------------------------------------
 
     private fun initializeBackend() {
         backend?.close()
@@ -248,8 +412,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        voiceModeCooldownJob?.cancel()
         speechToText.stopListening()
         tts.shutdown()
         backend?.close()
+    }
+
+    companion object {
+        private const val VOICE_MODE_COOLDOWN_MS = 700L
+        private const val MAX_CONSECUTIVE_VOICE_MODE_ERRORS = 3
     }
 }

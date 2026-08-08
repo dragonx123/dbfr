@@ -17,7 +17,11 @@ import androidx.core.content.ContextCompat
 import com.jarvis.assistant.ui.ChatScreen
 import com.jarvis.assistant.ui.ChatViewModel
 import com.jarvis.assistant.ui.SettingsScreen
+import com.jarvis.assistant.ui.VoiceModeScreen
+import com.jarvis.assistant.ui.orbColor
 import com.jarvis.assistant.ui.theme.JarvisTheme
+
+private enum class Screen { CHAT, SETTINGS, VOICE_MODE }
 
 class MainActivity : ComponentActivity() {
 
@@ -37,7 +41,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             JarvisTheme {
-                var showSettings by remember { mutableStateOf(false) }
+                var screen by remember { mutableStateOf(Screen.CHAT) }
 
                 val modelState by viewModel.modelState.collectAsState()
                 val backendType by viewModel.backendType.collectAsState()
@@ -50,18 +54,43 @@ class MainActivity : ComponentActivity() {
                 val ttsEnabled by viewModel.ttsEnabled.collectAsState()
                 val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsState()
 
-                if (showSettings) {
-                    SettingsScreen(
+                when (screen) {
+                    Screen.SETTINGS -> SettingsScreen(
                         currentBackendType = backendType,
                         currentOllamaUrl = ollamaBaseUrl,
                         currentOllamaModel = ollamaModel,
                         currentPersona = persona,
                         onSave = viewModel::updateSettings,
                         onPreviewVoice = viewModel::previewVoice,
-                        onBack = { showSettings = false },
+                        onBack = { screen = Screen.CHAT },
                     )
-                } else {
-                    ChatScreen(
+
+                    Screen.VOICE_MODE -> {
+                        val orbPhase by viewModel.orbPhase.collectAsState()
+                        val micLevel by viewModel.micLevel.collectAsState()
+                        val partialTranscript by viewModel.voiceModePartialTranscript.collectAsState()
+                        val replyText by viewModel.voiceModeReplyText.collectAsState()
+                        val isMuted by viewModel.isVoiceModeMuted.collectAsState()
+                        val voiceError by viewModel.voiceModeError.collectAsState()
+
+                        VoiceModeScreen(
+                            personaName = persona.displayName,
+                            orbColor = persona.orbColor,
+                            orbPhase = orbPhase,
+                            micLevel = micLevel,
+                            partialTranscript = partialTranscript,
+                            latestReplyText = replyText,
+                            isMuted = isMuted,
+                            errorMessage = voiceError,
+                            onMuteToggle = viewModel::toggleVoiceModeMute,
+                            onClose = {
+                                viewModel.exitVoiceMode()
+                                screen = Screen.CHAT
+                            },
+                        )
+                    }
+
+                    Screen.CHAT -> ChatScreen(
                         modelState = modelState,
                         backendType = backendType,
                         personaName = persona.displayName,
@@ -80,7 +109,12 @@ class MainActivity : ComponentActivity() {
                             viewModel.setWakeWordEnabled(enabled)
                         },
                         onPickModel = { pickModelFile.launch(arrayOf("*/*")) },
-                        onOpenSettings = { showSettings = true },
+                        onOpenSettings = { screen = Screen.SETTINGS },
+                        onOpenVoiceMode = {
+                            requestRuntimePermissions()
+                            viewModel.enterVoiceMode()
+                            screen = Screen.VOICE_MODE
+                        },
                     )
                 }
             }
