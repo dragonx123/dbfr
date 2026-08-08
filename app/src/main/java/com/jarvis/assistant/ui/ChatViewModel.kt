@@ -304,6 +304,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         tts.speak(previewLine(previewPersona))
     }
 
+    /** False when the device keystore is broken, so no API key can be stored. */
+    val secureStorageAvailable: Boolean get() = backendSettings.secureStorageAvailable
+
     /** Voices the device can actually speak with — populated once TTS initialises. */
     private val _availableVoices = MutableStateFlow<List<String>>(emptyList())
     val availableVoices: StateFlow<List<String>> = _availableVoices.asStateFlow()
@@ -584,6 +587,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 connectBackend(OllamaChatBackend(url, model, systemInstruction))
             }
             BackendType.CLOUD_API -> {
+                // No silent plaintext fallback: if the key can't be stored
+                // encrypted, say so rather than pretending it's configured.
+                if (!backendSettings.secureStorageAvailable) {
+                    AppLogger.e(TAG, "Cloud backend blocked: encrypted key storage unavailable")
+                    _modelState.value = ModelState.Error(
+                        "This device's secure keystore isn't working, so your API key can't be " +
+                            "stored safely. Jarvis won't save it in plain text. Use the " +
+                            "on-device or Ollama backend instead."
+                    )
+                    return
+                }
                 if (backendSettings.cloudApiKey.isBlank() || backendSettings.cloudModel.isBlank()) {
                     _modelState.value = ModelState.NotSetUp
                     return

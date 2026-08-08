@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.jarvis.assistant.util.AppLogger
+
+private const val TAG = "BackendSettings"
 
 /** Which [com.jarvis.assistant.ai.ChatBackend] Jarvis should use. */
 enum class BackendType { ON_DEVICE, OLLAMA, CLOUD_API }
@@ -28,11 +31,18 @@ class BackendSettings(context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    // The API key lives in EncryptedSharedPreferences (AES-256, key in the
-    // Android Keystore) rather than plain prefs. If the keystore is broken on
-    // some device (rare but real), fall back to app-private plain prefs
-    // rather than making cloud backends unusable.
-    private val securePrefs: SharedPreferences = runCatching {
+    /**
+     * The API key lives in EncryptedSharedPreferences (AES-256, master key in
+     * the Android Keystore). Null when the keystore is unusable.
+     *
+     * There is deliberately no plaintext fallback. An earlier version fell
+     * back to ordinary app-private prefs so cloud backends kept working on
+     * such devices — but that silently downgraded the user's own API key to
+     * plaintext without telling them, which is not a tradeoff the app gets
+     * to make on their behalf. Now the key is simply not stored and the
+     * cloud backend refuses to connect with a clear reason.
+     */
+    private val securePrefs: SharedPreferences? = runCatching {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
@@ -43,7 +53,29 @@ class BackendSettings(context: Context) {
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )
-    }.getOrDefault(prefs)
+    }.onFailure {
+        AppLogger.e(TAG, "Encrypted storage unavailable — cloud API keys cannot be saved", it)
+    }.getOrNull()
+
+    /** False when this device can't encrypt at rest, so no key can be stored. */
+    val secureStorageAvailable: Boolean get() = securePrefs != null
+
+    init {
+        // Builds between the fallback landing and this fix could have written
+        // a key into plain prefs. Move it into encrypted storage if we can,
+        // and scrub it either way — leaving a plaintext key behind would
+        // defeat the point of refusing to write one now.
+        val legacy = prefs.getString(KEY_CLOUD_API_KEY, null)
+        if (!legacy.isNullOrBlank()) {
+            securePrefs?.edit()?.putString(KEY_CLOUD_API_KEY, legacy)?.apply()
+            prefs.edit().remove(KEY_CLOUD_API_KEY).apply()
+            AppLogger.w(
+                TAG,
+                if (securePrefs != null) "Migrated a plaintext API key into encrypted storage"
+                else "Removed a plaintext API key; re-enter it once encrypted storage works",
+            )
+        }
+    }
 
     var backendType: BackendType
         get() = runCatching {
@@ -67,9 +99,21 @@ class BackendSettings(context: Context) {
         }.getOrDefault(CloudProvider.GEMINI)
         set(value) = prefs.edit().putString(KEY_CLOUD_PROVIDER, value.name).apply()
 
+    /**
+     * Reads as empty and refuses to store when encrypted storage is
+     * unavailable — see [secureStorageAvailable]. Callers surface that to
+     * the user rather than quietly writing the key in the clear.
+     */
     var cloudApiKey: String
-        get() = securePrefs.getString(KEY_CLOUD_API_KEY, "") ?: ""
-        set(value) = securePrefs.edit().putString(KEY_CLOUD_API_KEY, value.trim()).apply()
+        get() = securePrefs?.getString(KEY_CLOUD_API_KEY, "") ?: ""
+        set(value) {
+            val store = securePrefs
+            if (store == null) {
+                AppLogger.e(TAG, "Refusing to save an API key without encrypted storage")
+                return
+            }
+            store.edit().putString(KEY_CLOUD_API_KEY, value.trim()).apply()
+        }
 
     /** Model ID at the chosen provider, e.g. "gemini-2.0-flash". */
     var cloudModel: String

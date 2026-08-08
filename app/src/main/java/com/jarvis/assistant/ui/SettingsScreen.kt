@@ -106,6 +106,7 @@ fun SettingsScreen(
     maleVoiceName: String,
     femaleVoiceName: String,
     onChooseVoice: (VoiceGender, String) -> Unit,
+    secureStorageAvailable: Boolean,
     onOpenLogs: () -> Unit,
     onOpenInstructions: () -> Unit,
     onOpenMemory: () -> Unit,
@@ -231,7 +232,26 @@ fun SettingsScreen(
                 onSelect = { selectedType = BackendType.CLOUD_API },
             )
 
-            if (selectedType == BackendType.CLOUD_API) {
+            if (selectedType == BackendType.CLOUD_API && !secureStorageAvailable) {
+                Spacer(Modifier.height(16.dp))
+                Surface(
+                    color = Color.Transparent,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "This device's secure keystore isn't working, so an API key can't be " +
+                            "encrypted at rest. Jarvis won't store it in plain text, so the " +
+                            "cloud backend is unavailable here — use on-device or Ollama.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
+            }
+
+            if (selectedType == BackendType.CLOUD_API && secureStorageAvailable) {
                 Spacer(Modifier.height(20.dp))
                 Text("Provider", style = MaterialTheme.typography.bodyLarge)
                 Spacer(Modifier.height(8.dp))
@@ -360,7 +380,8 @@ fun SettingsScreen(
                 enabled = when (selectedType) {
                     BackendType.ON_DEVICE -> true
                     BackendType.OLLAMA -> ollamaUrl.isNotBlank() && ollamaModel.isNotBlank()
-                    BackendType.CLOUD_API -> cloudApiKey.isNotBlank() && cloudModel.isNotBlank()
+                    BackendType.CLOUD_API ->
+                        secureStorageAvailable && cloudApiKey.isNotBlank() && cloudModel.isNotBlank()
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {

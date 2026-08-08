@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
                         maleVoiceName = maleVoice,
                         femaleVoiceName = femaleVoice,
                         onChooseVoice = viewModel::chooseVoice,
+                        secureStorageAvailable = viewModel.secureStorageAvailable,
                         onOpenLogs = { screen = Screen.LOGS },
                         onOpenInstructions = { screen = Screen.INSTRUCTIONS },
                         onOpenMemory = { screen = Screen.MEMORY },
