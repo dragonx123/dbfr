@@ -16,6 +16,12 @@ class TextToSpeechManager(context: Context) {
     private var pendingGender: VoiceGender? = null
     private var onSpeakingChanged: (Boolean) -> Unit = {}
 
+    // The engine's own default voice, captured once at startup before any
+    // gender is applied. Needed so the pitch-only fallback in [applyGender]
+    // can reset back to a known starting point instead of leaving whatever
+    // voice object a *previous* persona's gender match left selected.
+    private var defaultVoice: Voice? = null
+
     // Explicit type annotation needed: the init lambda below references `tts` on
     // itself (to set the language once ready), and without a declared type here
     // that self-reference sends the compiler into a recursive type-inference loop
@@ -25,6 +31,7 @@ class TextToSpeechManager(context: Context) {
         isReady = status == TextToSpeech.SUCCESS
         if (isReady) {
             tts.language = Locale.getDefault()
+            defaultVoice = tts.voice
             pendingGender?.let { applyGender(it) }
             pendingText?.let { speak(it) }
             pendingText = null
@@ -45,12 +52,20 @@ class TextToSpeechManager(context: Context) {
     }
 
     /**
-     * Steers the TTS engine towards a voice matching [gender]. Most engines
-     * (including the stock Google one) name some of their voices with a
-     * "female"/"male" hint, e.g. "en-us-x-sfg#female_1-local" — when one is
-     * found for the current locale it's selected directly. Otherwise this
-     * falls back to a pitch shift, which reliably differentiates the two on
-     * every device/engine even when no separate voices are installed.
+     * Steers the TTS engine towards a voice matching [gender]. Some engines
+     * name a few of their voices with a "female"/"male" hint, e.g.
+     * "en-us-x-sfg#female_1-local" — when one is found for the current
+     * locale it's selected directly and played at neutral pitch/rate.
+     *
+     * Most modern devices (recent Pixels included) ship only a single local
+     * voice per language with no gender in its name at all, so that match
+     * usually fails — [findVoiceForGender] then falls back to picking a
+     * *different* installed voice deterministically per gender if more than
+     * one exists, and either way [applyGender] finishes with a strong
+     * pitch/rate shift (not a token nudge) so personas are still clearly
+     * distinguishable even when stuck sharing the one on-device voice.
+     * Every call resets to [defaultVoice] first so a previous persona's
+     * explicitly-matched voice never lingers onto the next one.
      */
     fun applyGender(gender: VoiceGender) {
         if (!isReady) {
@@ -61,8 +76,16 @@ class TextToSpeechManager(context: Context) {
         if (matched != null) {
             tts.voice = matched
             tts.setPitch(1.0f)
+            tts.setSpeechRate(1.0f)
         } else {
-            tts.setPitch(if (gender == VoiceGender.FEMALE) 1.15f else 0.92f)
+            tts.voice = defaultVoice
+            if (gender == VoiceGender.FEMALE) {
+                tts.setPitch(1.25f)
+                tts.setSpeechRate(1.05f)
+            } else {
+                tts.setPitch(0.78f)
+                tts.setSpeechRate(0.95f)
+            }
         }
     }
 
@@ -71,19 +94,39 @@ class TextToSpeechManager(context: Context) {
         // name.contains("male") check would wrongly match female voices too —
         // the male branch explicitly excludes "female" names to avoid that.
         val locale = Locale.getDefault()
-        return runCatching {
+        val candidates = runCatching {
             tts.voices
-                ?.filter { !it.isNetworkConnectionRequired }
-                ?.filter { voice ->
-                    val name = voice.name.lowercase()
-                    when (gender) {
-                        VoiceGender.FEMALE -> name.contains("female")
-                        VoiceGender.MALE -> name.contains("male") && !name.contains("female")
-                    }
-                }
-                ?.sortedByDescending { it.locale.language == locale.language }
-                ?.firstOrNull()
-        }.getOrNull()
+                ?.filter { it.locale.language == locale.language }
+                ?.sortedByDescending { !it.isNetworkConnectionRequired } // local voices first
+                ?: emptyList()
+        }.getOrDefault(emptyList())
+
+        val byName = candidates.firstOrNull { voice ->
+            val name = voice.name.lowercase()
+            when (gender) {
+                VoiceGender.FEMALE -> name.contains("female")
+                VoiceGender.MALE -> name.contains("male") && !name.contains("female")
+            }
+        }
+        if (byName != null) return byName
+
+        // No voice is gender-labeled (common on modern devices with just one
+        // local voice per language). If there happen to be several distinct
+        // *local* voices installed anyway, split them into two pools by name
+        // so MALE and FEMALE personas at least land on genuinely different
+        // voice models instead of the same one merely pitch-shifted — the
+        // split is deterministic (sorted by name), so the same gender always
+        // maps to the same voice across app runs.
+        val localDistinct = candidates
+            .filter { !it.isNetworkConnectionRequired }
+            .distinctBy { it.name }
+            .sortedBy { it.name }
+        if (localDistinct.size < 2) return null
+        val half = localDistinct.size / 2
+        return when (gender) {
+            VoiceGender.MALE -> localDistinct[0]
+            VoiceGender.FEMALE -> localDistinct[half]
+        }
     }
 
     fun speak(text: String) {
