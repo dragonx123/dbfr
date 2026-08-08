@@ -81,6 +81,20 @@ class BackendSettings(context: Context) {
         get() = prefs.getString(KEY_CLOUD_BASE_URL, "") ?: ""
         set(value) = prefs.edit().putString(KEY_CLOUD_BASE_URL, value.trim().trimEnd('/')).apply()
 
+    /**
+     * TTS voice the user picked for male/female personas, by
+     * [android.speech.tts.Voice.getName]. Blank means "let the app choose" —
+     * which on devices whose voice names carry no gender hint means pitch
+     * shifting does the work. See `TextToSpeechManager.applyPersona`.
+     */
+    var maleVoiceName: String
+        get() = prefs.getString(KEY_MALE_VOICE, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_MALE_VOICE, value).apply()
+
+    var femaleVoiceName: String
+        get() = prefs.getString(KEY_FEMALE_VOICE, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_FEMALE_VOICE, value).apply()
+
     /** Which [Persona] (name, voice gender, personality) is currently selected. */
     var persona: Persona
         get() = Personas.byId(prefs.getString(KEY_PERSONA_ID, Personas.JARVIS.id) ?: Personas.JARVIS.id)
@@ -108,6 +122,8 @@ class BackendSettings(context: Context) {
         private const val KEY_CLOUD_MODEL = "cloud_model"
         private const val KEY_CLOUD_BASE_URL = "cloud_base_url"
         private const val KEY_PERSONA_ID = "persona_id"
+        private const val KEY_MALE_VOICE = "male_voice_name"
+        private const val KEY_FEMALE_VOICE = "female_voice_name"
 
         /** Sensible default model per provider, prefer cheap+fast+multimodal. */
         fun defaultModelFor(provider: CloudProvider): String = when (provider) {

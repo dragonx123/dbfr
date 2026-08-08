@@ -53,7 +53,7 @@ object Personas {
             character or mention being a language model.
         """.trimIndent(),
         orbColorArgb = 0xFF00D1FF, // JARVIS HUD cyan-blue — the app's signature accent color
-        voicePitch = 0.82f,
+        voicePitch = 0.72f,
         voiceRate = 0.98f,
     )
 
@@ -82,7 +82,7 @@ object Personas {
             being a language model.
         """.trimIndent(),
         orbColorArgb = 0xFF1DE9B6, // teal — same cool family as Jarvis, clearly distinct hue
-        voicePitch = 1.18f,
+        voicePitch = 1.15f,
         voiceRate = 1.08f,
     )
 
@@ -110,7 +110,7 @@ object Personas {
             character or mention being a language model.
         """.trimIndent(),
         orbColorArgb = 0xFFFF6D28, // orange-red — matches EDITH's HUD color in Far From Home
-        voicePitch = 1.1f,
+        voicePitch = 1.06f,
         voiceRate = 1.02f,
     )
 
@@ -138,7 +138,7 @@ object Personas {
             a language model.
         """.trimIndent(),
         orbColorArgb = 0xFFFFC94A, // gold/amber — Vision's Mind Stone / forehead-gem color
-        voicePitch = 0.72f,
+        voicePitch = 0.66f,
         voiceRate = 0.9f,
     )
 
@@ -169,7 +169,7 @@ object Personas {
             being a language model.
         """.trimIndent(),
         orbColorArgb = 0xFFE0263E, // crimson — Ultron's red glowing-eye palette
-        voicePitch = 0.62f,
+        voicePitch = 0.56f,
         voiceRate = 0.94f,
     )
 

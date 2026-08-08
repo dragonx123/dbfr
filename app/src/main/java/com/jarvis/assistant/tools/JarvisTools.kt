@@ -246,7 +246,7 @@ class JarvisTools(private val context: Context) : ToolSet {
     )
     fun readScreen(): String {
         AppLogger.i(TAG, "readScreen()")
-        return JarvisAccessibilityService.readScreenText()
+        return JarvisAccessibilityService.readScreenForTool()
     }
 
     @Tool(

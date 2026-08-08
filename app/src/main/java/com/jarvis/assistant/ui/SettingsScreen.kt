@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -101,6 +102,10 @@ fun SettingsScreen(
     currentPersona: Persona,
     onSave: (BackendConfig) -> Unit,
     onPreviewVoice: (Persona) -> Unit,
+    availableVoices: List<String>,
+    maleVoiceName: String,
+    femaleVoiceName: String,
+    onChooseVoice: (VoiceGender, String) -> Unit,
     onOpenLogs: () -> Unit,
     onOpenInstructions: () -> Unit,
     onOpenMemory: () -> Unit,
@@ -165,6 +170,34 @@ fun SettingsScreen(
                     onPreview = { onPreviewVoice(persona) },
                 )
                 Spacer(Modifier.height(8.dp))
+            }
+
+            if (availableVoices.size > 1) {
+                Spacer(Modifier.height(20.dp))
+                Text("Which system voice to use", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Android doesn't say which of your installed voices are male or female — " +
+                        "the names are codes like \"en-us-x-iob-local\". Pick one for each here " +
+                        "and Jarvis will use it; tapping a voice plays a sample. Leave them " +
+                        "unset and pitch alone distinguishes the personas.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                VoicePickerRow(
+                    label = "Male personas (Jarvis, Vision, Ultron)",
+                    voices = availableVoices,
+                    selected = maleVoiceName,
+                    onPick = { onChooseVoice(VoiceGender.MALE, it) },
+                )
+                Spacer(Modifier.height(12.dp))
+                VoicePickerRow(
+                    label = "Female personas (Friday, Edith)",
+                    voices = availableVoices,
+                    selected = femaleVoiceName,
+                    onPick = { onChooseVoice(VoiceGender.FEMALE, it) },
+                )
             }
 
             Spacer(Modifier.height(16.dp))
@@ -464,6 +497,31 @@ private fun PersonaOption(
             IconButton(onClick = onPreview) {
                 Icon(Icons.Filled.VolumeUp, contentDescription = "Preview ${persona.displayName}'s voice")
             }
+        }
+    }
+}
+
+/**
+ * Horizontal list of the device's usable TTS voices. Names are opaque engine
+ * codes, so they're shown verbatim and shortened only at the ends — guessing
+ * a friendly label would be inventing information the system doesn't give us.
+ */
+@Composable
+private fun VoicePickerRow(
+    label: String,
+    voices: List<String>,
+    selected: String,
+    onPick: (String) -> Unit,
+) {
+    Text(label, style = MaterialTheme.typography.bodyLarge)
+    Spacer(Modifier.height(6.dp))
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(voices) { voice ->
+            ProviderChip(
+                label = voice.removePrefix("en-").removeSuffix("-local"),
+                selected = voice == selected,
+                onClick = { onPick(voice) },
+            )
         }
     }
 }

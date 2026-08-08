@@ -32,7 +32,7 @@ private const val TAG = "ScreenCapture"
  *
  * Only the cloud backends can use the result — the on-device LiteRT models
  * this app loads are text-only. Text-only setups get the accessibility
- * service's [JarvisAccessibilityService.readScreenText] instead, which is
+ * service's [JarvisAccessibilityService.readScreen] instead, which is
  * often more useful anyway since it returns real labels rather than pixels.
  */
 object ScreenCaptureManager {

@@ -14,6 +14,7 @@ import com.jarvis.assistant.ai.WebTools
 import com.jarvis.assistant.ai.parseToolDirective
 import com.jarvis.assistant.control.JarvisAccessibilityService
 import com.jarvis.assistant.control.ScreenCaptureManager
+import com.jarvis.assistant.control.ScreenRead
 import com.jarvis.assistant.memory.ConversationStore
 import com.jarvis.assistant.memory.Memory
 import com.jarvis.assistant.memory.MemoryExtractor
@@ -28,8 +29,10 @@ import com.jarvis.assistant.model.DataCard
 import com.jarvis.assistant.model.DataCardEntry
 import com.jarvis.assistant.model.ModelRepository
 import com.jarvis.assistant.model.Persona
+import com.jarvis.assistant.model.Personas
 import com.jarvis.assistant.model.Sender
 import com.jarvis.assistant.model.UserInstructions
+import com.jarvis.assistant.model.VoiceGender
 import com.jarvis.assistant.util.AppLogger
 import com.jarvis.assistant.voice.SpeechToText
 import com.jarvis.assistant.voice.TextToSpeechManager
@@ -219,6 +222,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        tts.setOnReady { _availableVoices.value = tts.usableVoices().map { it.name } }
+        tts.setVoiceOverrides(
+            backendSettings.maleVoiceName.ifBlank { null },
+            backendSettings.femaleVoiceName.ifBlank { null },
+        )
         tts.applyPersona(backendSettings.persona)
         // One-time move of anything taught to the previous build, which kept
         // facts in SharedPreferences before MemoryStore existed.
@@ -282,6 +290,37 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun previewVoice(previewPersona: Persona) {
         tts.applyPersona(previewPersona)
         tts.speak(previewLine(previewPersona))
+    }
+
+    /** Voices the device can actually speak with — populated once TTS initialises. */
+    private val _availableVoices = MutableStateFlow<List<String>>(emptyList())
+    val availableVoices: StateFlow<List<String>> = _availableVoices.asStateFlow()
+
+    private val _maleVoiceName = MutableStateFlow(backendSettings.maleVoiceName)
+    val maleVoiceName: StateFlow<String> = _maleVoiceName.asStateFlow()
+
+    private val _femaleVoiceName = MutableStateFlow(backendSettings.femaleVoiceName)
+    val femaleVoiceName: StateFlow<String> = _femaleVoiceName.asStateFlow()
+
+    /** Saves an explicit voice choice and previews it straight away. */
+    fun chooseVoice(gender: VoiceGender, voiceName: String) {
+        when (gender) {
+            VoiceGender.MALE -> {
+                backendSettings.maleVoiceName = voiceName
+                _maleVoiceName.value = voiceName
+            }
+            VoiceGender.FEMALE -> {
+                backendSettings.femaleVoiceName = voiceName
+                _femaleVoiceName.value = voiceName
+            }
+        }
+        tts.setVoiceOverrides(
+            backendSettings.maleVoiceName.ifBlank { null },
+            backendSettings.femaleVoiceName.ifBlank { null },
+        )
+        val sample = Personas.all.firstOrNull { it.gender == gender } ?: Personas.JARVIS
+        tts.applyPersona(sample)
+        tts.speak(previewLine(sample))
     }
 
     private fun previewLine(p: Persona): String = when (p.id) {
@@ -590,8 +629,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Sends [text]. When [promptOverride] is given, that's what the model
+     * receives while the chat still shows [text] — used to attach context
+     * (screen contents, memories) without dumping plumbing into the user's
+     * own message bubble.
+     */
     @OptIn(FlowPreview::class)
-    fun sendMessage(text: String) {
+    fun sendMessage(text: String, promptOverride: String? = null) {
         val activeBackend = backend
         // Also refuse a new message while one is still generating: sendMessage
         // used to launch an independent coroutine per call with no guard, so
@@ -621,7 +666,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // Relevant memories ride along with this turn rather than living
             // in the system prompt: the prompt is fixed when the backend
             // connects, but what's worth recalling changes every message.
-            var prompt = memoryStore.recallBlock(text) + pendingRecap + text
+            var prompt = memoryStore.recallBlock(text) + pendingRecap + (promptOverride ?: text)
             pendingRecap = ""
             var hops = 0
             var finalText = ""
@@ -752,16 +797,46 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * for UI questions is often the better answer anyway, since it returns
      * real labels instead of pixels.
      */
+    /**
+     * Frames real screen text for the model. The explicit "don't invent"
+     * clause is load-bearing: small on-device models will happily narrate a
+     * screen from nothing if the question implies one exists.
+     */
+    private fun screenContextPrompt(question: String, screenText: String): String = buildString {
+        appendLine("[This is the text actually on the user's screen right now, read from the")
+        appendLine("accessibility service. Answer only from it. If it doesn't contain what they")
+        appendLine("asked about, say so plainly — never invent screen contents.]")
+        appendLine(screenText)
+        appendLine()
+        append(question)
+    }
+
     @OptIn(FlowPreview::class)
     fun sendWithScreenshot(question: String) {
         val activeBackend = backend
         if (activeBackend == null || _modelState.value !is ModelState.Ready || _isGenerating.value) return
 
         if (!activeBackend.supportsImages) {
-            val screenText = JarvisAccessibilityService.readScreenText()
-            sendMessage(
-                "$question\n\n[Screen contents, read via accessibility]\n$screenText"
-            )
+            // Text-only backend: the accessibility service is the only route.
+            // Critically, a failure here must NOT reach the model — an earlier
+            // version passed the error string through labelled as screen
+            // contents, and the model duly described a screen it had never
+            // seen. If there's nothing real to show it, don't generate at all.
+            when (val screen = JarvisAccessibilityService.readScreen()) {
+                ScreenRead.NotEnabled -> postMessage(
+                    Sender.SYSTEM,
+                    "I can't see your screen yet. Turn on \"Jarvis screen control\" in " +
+                        "Settings > Screen control, then try again.",
+                )
+                ScreenRead.Empty -> postMessage(
+                    Sender.SYSTEM,
+                    "There's nothing readable on screen right now.",
+                )
+                is ScreenRead.Text -> sendMessage(
+                    text = question,
+                    promptOverride = screenContextPrompt(question, screen.content),
+                )
+            }
             return
         }
         if (!ScreenCaptureManager.hasConsent) {
@@ -769,17 +844,32 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        postMessage(Sender.USER, question)
-        val replyId = UUID.randomUUID().toString()
-        _messages.value = _messages.value + ChatMessage(replyId, Sender.JARVIS, "", isStreaming = true)
-
         viewModelScope.launch {
+            // Capture first: if there's no frame there's nothing to ask about,
+            // and posting the turn before knowing that would leave an empty
+            // question hanging for the model to answer from imagination.
+            val jpeg = ScreenCaptureManager.captureBase64Jpeg(getApplication())
+            if (jpeg == null) {
+                postMessage(
+                    Sender.SYSTEM,
+                    "Couldn't capture the screen. Tap the screen button again and re-allow " +
+                        "screen capture — Android drops the permission after a while.",
+                )
+                return@launch
+            }
+
+            postMessage(Sender.USER, question)
+            val replyId = UUID.randomUUID().toString()
+            _messages.value = _messages.value + ChatMessage(replyId, Sender.JARVIS, "", isStreaming = true)
+
             _isGenerating.value = true
             val builder = StringBuilder()
             runCatching {
-                val jpeg = ScreenCaptureManager.captureBase64Jpeg(getApplication())
-                    ?: error("Couldn't capture the screen.")
-                activeBackend.sendMessageWithImageStream(question, jpeg)
+                val framedQuestion =
+                    "[The attached image is the user's screen right now. Answer only from what " +
+                        "is visible in it; if it doesn't show what they asked about, say so " +
+                        "rather than inventing.]\n\n$question"
+                activeBackend.sendMessageWithImageStream(framedQuestion, jpeg)
                     .timeout(GENERATION_IDLE_TIMEOUT)
                     .collect { chunk ->
                         builder.append(chunk)
