@@ -57,6 +57,13 @@ object WebTools {
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .followRedirects(true)
+        // Checking only the URL we were handed would leave the hole open:
+        // a public address can 302 to an internal one, and OkHttp follows
+        // redirects for us. Validating in an interceptor covers every hop.
+        .addInterceptor { chain ->
+            requirePublicHttpUrl(chain.request().url.toString())
+            chain.proceed(chain.request())
+        }
         .build()
 
     private const val USER_AGENT =
@@ -94,6 +101,7 @@ object WebTools {
     /** Fetches [pageUrl] and returns readable text (tags stripped), capped for prompt size. */
     fun fetchPage(pageUrl: String, maxChars: Int = 6000): String {
         AppLogger.i(TAG, "fetch_page: $pageUrl")
+        requirePublicHttpUrl(pageUrl)
         val html = get(pageUrl)
         val withoutScripts = html
             .replace(Regex("""<script.*?</script>""", RegexOption.DOT_MATCHES_ALL), " ")
@@ -103,6 +111,47 @@ object WebTools {
             .trim()
         return if (text.length <= maxChars) text else text.take(maxChars) + "\n[…truncated]"
     }
+
+    /**
+     * Rejects anything that isn't a public http(s) address.
+     *
+     * The URL fetched here can originate from a web page the model just
+     * read: a hostile page can instruct the model to fetch some other
+     * address, and the model will comply. Without this, that's a
+     * server-side-request-forgery path into the user's own network — a
+     * router admin page, a printer, a LAN service — with the contents
+     * summarized straight back into the conversation. Cleartext is allowed
+     * app-wide for LAN Ollama servers, which makes plain http://192.168.x.x
+     * reachable too, so the check is on the resolved address rather than
+     * the scheme alone.
+     */
+    private fun requirePublicHttpUrl(url: String) {
+        val parsed = runCatching { java.net.URI(url) }.getOrNull()
+            ?: error("That doesn't look like a valid URL.")
+        val scheme = parsed.scheme?.lowercase()
+        require(scheme == "http" || scheme == "https") {
+            "Only http and https addresses can be fetched."
+        }
+        val host = parsed.host ?: error("That URL has no host.")
+
+        val addresses = runCatching { java.net.InetAddress.getAllByName(host) }
+            .getOrElse { error("Couldn't resolve $host.") }
+        require(addresses.isNotEmpty()) { "Couldn't resolve $host." }
+        addresses.forEach { address ->
+            require(
+                !address.isLoopbackAddress && !address.isAnyLocalAddress &&
+                    !address.isLinkLocalAddress && !address.isSiteLocalAddress &&
+                    !address.isMulticastAddress && !isUniqueLocalIpv6(address)
+            ) {
+                "For safety Jarvis only fetches public web addresses, not devices " +
+                    "on your local network ($host)."
+            }
+        }
+    }
+
+    /** IPv6 unique-local (fc00::/7) — the v6 equivalent of a private range. */
+    private fun isUniqueLocalIpv6(address: java.net.InetAddress): Boolean =
+        address is java.net.Inet6Address && (address.address.firstOrNull()?.toInt()?.and(0xFE) == 0xFC)
 
     private fun get(url: String): String {
         val request = Request.Builder()

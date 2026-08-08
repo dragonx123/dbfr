@@ -4,6 +4,12 @@ import android.content.Context
 import com.jarvis.assistant.model.ChatMessage
 import com.jarvis.assistant.model.Sender
 import com.jarvis.assistant.util.AppLogger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -23,7 +29,16 @@ class ConversationStore(context: Context) {
 
     private val file = File(context.applicationContext.filesDir, FILE_NAME)
 
-    fun load(): List<ChatMessage> = runCatching {
+    // Single-threaded, off the UI thread: saving ran on every completed
+    // reply and the transcript can reach 200 messages, so this was real
+    // disk I/O on the main thread once per turn.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+
+    /** Reads the saved transcript. Call from a background context. */
+    suspend fun loadAsync(): List<ChatMessage> = withContext(Dispatchers.IO) { load() }
+
+    private fun load(): List<ChatMessage> = runCatching {
         if (!file.exists()) return emptyList()
         val array = JSONArray(file.readText())
         (0 until array.length()).mapNotNull { i ->
@@ -44,27 +59,31 @@ class ConversationStore(context: Context) {
     }
 
     fun save(messages: List<ChatMessage>) {
-        runCatching {
-            val recent = messages
-                .filter { it.dataCard == null && !it.isStreaming && it.text.isNotBlank() }
-                .takeLast(MAX_MESSAGES)
-            val array = JSONArray()
-            recent.forEach { message ->
-                array.put(
-                    JSONObject()
-                        .put("id", message.id)
-                        .put("sender", message.sender.name)
-                        .put("text", message.text)
-                        .put("timestamp", message.timestampMillis)
-                )
-            }
-            file.writeText(array.toString())
-        }.onFailure { AppLogger.e(TAG, "Couldn't save conversation", it) }
+        val recent = messages
+            .filter { it.dataCard == null && !it.isStreaming && it.text.isNotBlank() }
+            .takeLast(MAX_MESSAGES)
+        io.launch {
+            runCatching {
+                val array = JSONArray()
+                recent.forEach { message ->
+                    array.put(
+                        JSONObject()
+                            .put("id", message.id)
+                            .put("sender", message.sender.name)
+                            .put("text", message.text)
+                            .put("timestamp", message.timestampMillis)
+                    )
+                }
+                file.writeText(array.toString())
+            }.onFailure { AppLogger.e(TAG, "Couldn't save conversation", it) }
+        }
     }
 
     fun clear() {
-        runCatching { file.delete() }
-        AppLogger.i(TAG, "Conversation history cleared")
+        io.launch {
+            runCatching { file.delete() }
+            AppLogger.i(TAG, "Conversation history cleared")
+        }
     }
 
     /**

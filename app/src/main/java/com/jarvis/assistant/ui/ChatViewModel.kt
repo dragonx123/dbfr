@@ -81,8 +81,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private var backend: ChatBackend? = null
 
-    // Seeded from disk so closing the app no longer wipes the conversation.
-    private val _messages = MutableStateFlow<List<ChatMessage>>(conversationStore.load())
+    // Restored from disk asynchronously (see init) so closing the app no
+    // longer wipes the conversation, without a blocking read at startup.
+    private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
     val memories: StateFlow<List<Memory>> = memoryStore.memories
@@ -222,6 +223,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        // Restore the transcript off the main thread, then rebuild the recap
+        // from it. Ordering against connectBackend() doesn't matter: whichever
+        // finishes last computes the recap from the fullest message list.
+        viewModelScope.launch {
+            val restored = conversationStore.loadAsync()
+            if (restored.isNotEmpty()) {
+                _messages.value = restored + _messages.value
+                pendingRecap = conversationStore.recapBlock(_messages.value)
+            }
+        }
+
         tts.setOnReady { _availableVoices.value = tts.usableVoices().map { it.name } }
         tts.setVoiceOverrides(
             backendSettings.maleVoiceName.ifBlank { null },
@@ -379,6 +391,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _ttsEnabled.value = wasTtsEnabledBeforeVoiceMode
         val app = getApplication<Application>()
         app.stopService(Intent(app, VoiceSessionService::class.java))
+        if (_continuousScreenView.value) {
+            _continuousScreenView.value = false
+            ScreenCaptureManager.release(app)
+        }
         if (wasWakeWordEnabledBeforeVoiceMode) {
             app.startForegroundService(Intent(app, WakeWordService::class.java))
         }
@@ -787,6 +803,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun setContinuousScreenView(enabled: Boolean) {
         _continuousScreenView.value = enabled
         AppLogger.i(TAG, "Continuous screen view: $enabled")
+        // The projection stays alive between captures, so turning watching
+        // off has to tear it down — otherwise the system's screen-sharing
+        // indicator would linger with nothing using it.
+        if (!enabled) ScreenCaptureManager.release(getApplication())
     }
 
     /**
@@ -1033,6 +1053,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         backend?.close()
         val app = getApplication<Application>()
         app.stopService(Intent(app, VoiceSessionService::class.java))
+        ScreenCaptureManager.release(app)
     }
 
     companion object {

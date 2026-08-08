@@ -67,6 +67,14 @@
             android:foregroundServiceType="microphone"
             android:exported="false" />
 
+        <!-- Required from Android 14 on: MediaProjection refuses to create a
+             virtual display unless a foregroundServiceType="mediaProjection"
+             service is already running. See ScreenCaptureService. -->
+        <service
+            android:name=".control.ScreenCaptureService"
+            android:foregroundServiceType="mediaProjection"
+            android:exported="false" />
+
         <!-- Optional, user-enabled in Android's Accessibility settings: lets Jarvis
              read the current screen and operate it (back/home, scroll, tap by label). -->
         <service

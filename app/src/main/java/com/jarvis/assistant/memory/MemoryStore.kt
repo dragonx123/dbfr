@@ -2,9 +2,14 @@ package com.jarvis.assistant.memory
 
 import android.content.Context
 import com.jarvis.assistant.util.AppLogger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -53,12 +58,27 @@ class MemoryStore(context: Context) {
 
     private val file = File(context.applicationContext.filesDir, FILE_NAME)
 
+    // Single-threaded so writes can never interleave and corrupt the file,
+    // and so none of them ever land on the UI thread — recall() mutates
+    // use-counts, so a naive implementation wrote to disk on every message.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+
     private val _memories = MutableStateFlow<List<Memory>>(emptyList())
     val memories: StateFlow<List<Memory>> = _memories.asStateFlow()
 
     init {
-        _memories.value = load()
-        AppLogger.i(TAG, "Loaded ${_memories.value.size} memories")
+        io.launch {
+            val loaded = load()
+            synchronized(this@MemoryStore) {
+                // Merge rather than replace: a memory could have been saved
+                // in the moment between construction and the load finishing.
+                val existing = _memories.value
+                val known = existing.map { it.id }.toSet()
+                _memories.value = loaded.filterNot { it.id in known } + existing
+            }
+            AppLogger.i(TAG, "Loaded ${loaded.size} memories")
+        }
     }
 
     /**
@@ -196,22 +216,26 @@ class MemoryStore(context: Context) {
         emptyList()
     }
 
+    /** Snapshots the current list and writes it off the caller's thread. */
     private fun persist() {
-        runCatching {
-            val array = JSONArray()
-            _memories.value.forEach { memory ->
-                array.put(
-                    JSONObject()
-                        .put("id", memory.id)
-                        .put("text", memory.text)
-                        .put("kind", memory.kind.name)
-                        .put("createdAt", memory.createdAt)
-                        .put("useCount", memory.useCount)
-                        .put("lastUsedAt", memory.lastUsedAt)
-                )
-            }
-            file.writeText(array.toString())
-        }.onFailure { AppLogger.e(TAG, "Couldn't save memories", it) }
+        val snapshot = _memories.value
+        io.launch {
+            runCatching {
+                val array = JSONArray()
+                snapshot.forEach { memory ->
+                    array.put(
+                        JSONObject()
+                            .put("id", memory.id)
+                            .put("text", memory.text)
+                            .put("kind", memory.kind.name)
+                            .put("createdAt", memory.createdAt)
+                            .put("useCount", memory.useCount)
+                            .put("lastUsedAt", memory.lastUsedAt)
+                    )
+                }
+                file.writeText(array.toString())
+            }.onFailure { AppLogger.e(TAG, "Couldn't save memories", it) }
+        }
     }
 
     companion object {

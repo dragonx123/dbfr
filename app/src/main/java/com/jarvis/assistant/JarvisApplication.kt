@@ -36,10 +36,20 @@ class JarvisApplication : Application() {
                 description = "Shows while a voice conversation is running in the background."
             }
         )
+        manager.createNotificationChannel(
+            NotificationChannel(
+                SCREEN_CAPTURE_CHANNEL_ID,
+                "Screen sharing",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Shows while Jarvis is able to see your screen."
+            }
+        )
     }
 
     companion object {
         const val WAKE_WORD_CHANNEL_ID = "jarvis_wake_word"
         const val VOICE_SESSION_CHANNEL_ID = "jarvis_voice_session"
+        const val SCREEN_CAPTURE_CHANNEL_ID = "jarvis_screen_capture"
     }
 }
