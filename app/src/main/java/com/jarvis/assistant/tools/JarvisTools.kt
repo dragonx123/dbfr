@@ -13,6 +13,8 @@ import com.google.ai.edge.litertlm.Tool
 import com.google.ai.edge.litertlm.ToolParam
 import com.google.ai.edge.litertlm.ToolSet
 import com.jarvis.assistant.ai.WebTools
+import com.jarvis.assistant.control.JarvisAccessibilityService
+import com.jarvis.assistant.model.UserInstructions
 import com.jarvis.assistant.util.AppLogger
 import java.util.Date
 
@@ -234,6 +236,47 @@ class JarvisTools(private val context: Context) : ToolSet {
         val timeFormat = DateFormat.getTimeFormat(context)
         val dateFormat = DateFormat.getLongDateFormat(context)
         return "${dateFormat.format(now)}, ${timeFormat.format(now)}"
+    }
+
+    @Tool(
+        description = "Read the text currently visible on the user's screen. Use this when the " +
+            "user asks about what they're looking at, what's on screen, or to help with " +
+            "something in another app."
+    )
+    fun readScreen(): String {
+        AppLogger.i(TAG, "readScreen()")
+        return JarvisAccessibilityService.readScreenText()
+    }
+
+    @Tool(
+        description = "Navigate the user's phone: press back, go home, open recent apps, " +
+            "open notifications, open quick settings, or lock the screen."
+    )
+    fun controlScreen(
+        @ToolParam(description = "One of: back, home, recents, notifications, quick settings, lock")
+        action: String
+    ): String = JarvisAccessibilityService.performGlobal(action)
+
+    @Tool(description = "Tap a button or item on the current screen by the text label shown on it.")
+    fun tapOnScreen(
+        @ToolParam(description = "The visible text of the thing to tap.") label: String
+    ): String = JarvisAccessibilityService.tapByLabel(label)
+
+    @Tool(description = "Scroll the current screen up or down.")
+    fun scrollScreen(
+        @ToolParam(description = "Either 'up' or 'down'.") direction: String
+    ): String = JarvisAccessibilityService.scroll(direction)
+
+    @Tool(
+        description = "Save a fact about the user so you remember it in future conversations. " +
+            "Use when the user says to remember something, or tells you a lasting preference."
+    )
+    fun rememberFact(
+        @ToolParam(description = "The fact, written as one short standalone sentence.") fact: String
+    ): String {
+        AppLogger.i(TAG, "rememberFact(\"$fact\")")
+        val added = UserInstructions.get(context).addFact(fact)
+        return if (added) "Saved: \"$fact\"" else "I already knew that."
     }
 
     @Tool(description = "Open the phone's system settings app.")

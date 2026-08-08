@@ -12,6 +12,8 @@ import com.jarvis.assistant.ai.OllamaChatBackend
 import com.jarvis.assistant.ai.ToolDirective
 import com.jarvis.assistant.ai.WebTools
 import com.jarvis.assistant.ai.parseToolDirective
+import com.jarvis.assistant.control.JarvisAccessibilityService
+import com.jarvis.assistant.control.ScreenCaptureManager
 import com.jarvis.assistant.model.BackendConfig
 import com.jarvis.assistant.model.BackendSettings
 import com.jarvis.assistant.model.BackendType
@@ -22,6 +24,7 @@ import com.jarvis.assistant.model.DataCardEntry
 import com.jarvis.assistant.model.ModelRepository
 import com.jarvis.assistant.model.Persona
 import com.jarvis.assistant.model.Sender
+import com.jarvis.assistant.model.UserInstructions
 import com.jarvis.assistant.util.AppLogger
 import com.jarvis.assistant.voice.SpeechToText
 import com.jarvis.assistant.voice.TextToSpeechManager
@@ -62,6 +65,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val modelRepository = ModelRepository(application)
     private val backendSettings = BackendSettings(application)
+    private val userInstructions = UserInstructions.get(application)
     private val speechToText = SpeechToText(application)
     private val tts = TextToSpeechManager(application)
 
@@ -427,7 +431,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 bargeInTriggered = false
                 if (_isSpeaking.value) tts.stop()
-                sendMessage(text)
+                // Continuous screen view: each spoken turn carries a fresh
+                // frame, so Jarvis answers about whatever is on screen right
+                // now without being asked to look each time.
+                if (_continuousScreenView.value && ScreenCaptureManager.hasConsent) {
+                    sendWithScreenshot(text)
+                } else {
+                    sendMessage(text)
+                }
             },
             onError = { message ->
                 _isListening.value = false
@@ -466,10 +477,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // text-protocol backends get the JSON tool-directive loop instead —
         // see WEB_TOOL_INSTRUCTION and the loop in sendMessage().
         val persona = backendSettings.persona
-        val systemInstruction = when (backendSettings.backendType) {
+        val base = when (backendSettings.backendType) {
             BackendType.ON_DEVICE -> persona.systemInstruction
             else -> persona.systemInstruction + WEB_TOOL_INSTRUCTION
         }
+        // The user's own standing instructions and taught facts go last, so
+        // they take precedence over the persona's defaults.
+        val systemInstruction = base + userInstructions.promptBlock()
 
         when (backendSettings.backendType) {
             BackendType.ON_DEVICE -> {
@@ -630,6 +644,108 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (stalled) {
                 AppLogger.w(TAG, "Generation stalled (${GENERATION_IDLE_TIMEOUT} idle) — reconnecting backend")
                 withContext(Dispatchers.IO) { initializeBackend() }
+            }
+        }
+    }
+
+    // -- Instructions & memory -----------------------------------------------------
+
+    private val _customInstructions = MutableStateFlow(userInstructions.customInstructions)
+    val customInstructions: StateFlow<String> = _customInstructions.asStateFlow()
+
+    private val _learnedFacts = MutableStateFlow(userInstructions.facts)
+    val learnedFacts: StateFlow<List<String>> = _learnedFacts.asStateFlow()
+
+    /** Re-reads facts the model saved itself via its rememberFact tool. */
+    fun refreshLearnedFacts() {
+        _learnedFacts.value = userInstructions.facts
+    }
+
+    fun saveCustomInstructions(text: String) {
+        if (text == userInstructions.customInstructions) return
+        userInstructions.customInstructions = text
+        _customInstructions.value = userInstructions.customInstructions
+        AppLogger.i(TAG, "Custom instructions updated — reconnecting backend")
+        // The instructions live in the system prompt, which is fixed at
+        // connect time on every backend, so this needs a reconnect to apply.
+        initializeBackend()
+    }
+
+    fun deleteLearnedFact(fact: String) {
+        userInstructions.removeFact(fact)
+        _learnedFacts.value = userInstructions.facts
+        initializeBackend()
+    }
+
+    fun clearLearnedFacts() {
+        userInstructions.clearFacts()
+        _learnedFacts.value = userInstructions.facts
+        initializeBackend()
+    }
+
+    // -- Screen vision -------------------------------------------------------------
+
+    private val _continuousScreenView = MutableStateFlow(false)
+    val continuousScreenView: StateFlow<Boolean> = _continuousScreenView.asStateFlow()
+
+    val hasScreenConsent: Boolean get() = ScreenCaptureManager.hasConsent
+
+    fun setContinuousScreenView(enabled: Boolean) {
+        _continuousScreenView.value = enabled
+        AppLogger.i(TAG, "Continuous screen view: $enabled")
+    }
+
+    /**
+     * Sends [question] along with a fresh screenshot so a multimodal backend
+     * can answer about what the user is actually looking at.
+     *
+     * Falls back to the accessibility service's screen *text* when the active
+     * backend can't take images (the on-device models are text-only) — which
+     * for UI questions is often the better answer anyway, since it returns
+     * real labels instead of pixels.
+     */
+    @OptIn(FlowPreview::class)
+    fun sendWithScreenshot(question: String) {
+        val activeBackend = backend
+        if (activeBackend == null || _modelState.value !is ModelState.Ready || _isGenerating.value) return
+
+        if (!activeBackend.supportsImages) {
+            val screenText = JarvisAccessibilityService.readScreenText()
+            sendMessage(
+                "$question\n\n[Screen contents, read via accessibility]\n$screenText"
+            )
+            return
+        }
+        if (!ScreenCaptureManager.hasConsent) {
+            postMessage(Sender.SYSTEM, "Tap the screen-view button again and allow screen capture first.")
+            return
+        }
+
+        postMessage(Sender.USER, question)
+        val replyId = UUID.randomUUID().toString()
+        _messages.value = _messages.value + ChatMessage(replyId, Sender.JARVIS, "", isStreaming = true)
+
+        viewModelScope.launch {
+            _isGenerating.value = true
+            val builder = StringBuilder()
+            runCatching {
+                val jpeg = ScreenCaptureManager.captureBase64Jpeg(getApplication())
+                    ?: error("Couldn't capture the screen.")
+                activeBackend.sendMessageWithImageStream(question, jpeg)
+                    .timeout(GENERATION_IDLE_TIMEOUT)
+                    .collect { chunk ->
+                        builder.append(chunk)
+                        updateMessage(replyId, builder.toString(), isStreaming = true)
+                    }
+            }.onFailure {
+                AppLogger.e(TAG, "Screen-view turn failed", it)
+                builder.append(if (builder.isEmpty()) "[Error: ${it.message}]" else "\n\n[Error: ${it.message}]")
+            }
+            _isGenerating.value = false
+            updateMessage(replyId, builder.toString(), isStreaming = false)
+            if (_ttsEnabled.value) {
+                currentlySpokenText = builder.toString()
+                tts.speak(builder.toString())
             }
         }
     }

@@ -17,6 +17,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
@@ -99,6 +101,9 @@ fun SettingsScreen(
     onSave: (BackendConfig) -> Unit,
     onPreviewVoice: (Persona) -> Unit,
     onOpenLogs: () -> Unit,
+    onOpenInstructions: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    screenControlEnabled: Boolean,
     onBack: () -> Unit,
 ) {
     var selectedType by remember { mutableStateOf(currentBackendType) }
@@ -327,6 +332,46 @@ fun SettingsScreen(
             }
 
             Spacer(Modifier.height(24.dp))
+            Text("Teaching Jarvis", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Standing instructions you write, plus anything Jarvis has saved when you " +
+                    "said \"remember that…\". Both apply on every backend.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            LinkCard(
+                icon = Icons.Filled.School,
+                label = "Instructions & memory",
+                onClick = onOpenInstructions,
+            )
+
+            Spacer(Modifier.height(24.dp))
+            Text("Screen control", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (screenControlEnabled) {
+                    "Enabled. Jarvis can read what's on your screen and operate it — going " +
+                        "back or home, scrolling, and tapping buttons you name. Tap below to " +
+                        "review or turn it off."
+                } else {
+                    "Off. Turning this on lets Jarvis read the current screen and operate it " +
+                        "for you. Android requires you to enable it yourself in Accessibility " +
+                        "settings — find \"Jarvis screen control\" in the list."
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            LinkCard(
+                icon = Icons.Filled.Accessibility,
+                label = if (screenControlEnabled) "Screen control: on" else "Enable screen control",
+                onClick = onOpenAccessibilitySettings,
+                highlighted = screenControlEnabled,
+            )
+
+            Spacer(Modifier.height(24.dp))
             Text("Diagnostics", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
             Text(
@@ -337,27 +382,42 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
-            Card(
-                onClick = onOpenLogs,
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                shape = RoundedCornerShape(12.dp),
-            ) {
-                Row(
-                    modifier = Modifier.padding(14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Filled.Terminal, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("View logs", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            LinkCard(icon = Icons.Filled.Terminal, label = "View logs", onClick = onOpenLogs)
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/** A tappable settings row that navigates somewhere: icon, label, chevron. */
+@Composable
+private fun LinkCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    highlighted: Boolean = false,
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(
+            1.dp,
+            if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+        ),
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

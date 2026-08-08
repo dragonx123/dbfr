@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SettingsVoice
@@ -75,6 +76,7 @@ fun ChatScreen(
     onPickModel: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenVoiceMode: () -> Unit,
+    onSendWithScreen: (String) -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -140,6 +142,7 @@ fun ChatScreen(
                             isGenerating = isGenerating,
                             onSend = onSend,
                             onMicClick = onMicClick,
+                            onSendWithScreen = onSendWithScreen,
                         )
                     }
                 }
@@ -351,6 +354,7 @@ private fun InputBar(
     isGenerating: Boolean,
     onSend: (String) -> Unit,
     onMicClick: () -> Unit,
+    onSendWithScreen: (String) -> Unit,
 ) {
     var text by rememberSaveable { mutableStateOf("") }
 
@@ -381,6 +385,23 @@ private fun InputBar(
                 singleLine = true,
             )
             Spacer(Modifier.width(4.dp))
+            // Ask about what's on screen: sends the typed question together
+            // with a screenshot (cloud backends) or the screen's text read
+            // via the accessibility service (everything else).
+            IconButton(
+                onClick = {
+                    val question = text.ifBlank { "What's on my screen right now?" }
+                    onSendWithScreen(question)
+                    text = ""
+                },
+                enabled = !isGenerating,
+            ) {
+                Icon(
+                    Icons.Filled.ScreenShare,
+                    contentDescription = "Ask about what's on screen",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             IconButton(
                 onClick = {
                     if (text.isNotBlank()) {

@@ -20,6 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.ScreenShare
+import androidx.compose.material.icons.filled.StopScreenShare
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +52,8 @@ fun VoiceModeScreen(
     latestReplyText: String,
     isMuted: Boolean,
     errorMessage: String?,
+    screenViewEnabled: Boolean,
+    onScreenViewToggle: () -> Unit,
     onMuteToggle: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -130,17 +134,37 @@ fun VoiceModeScreen(
 
             Spacer(Modifier.weight(1f))
 
-            IconButton(
-                onClick = onMuteToggle,
-                modifier = Modifier
-                    .size(56.dp)
-                    .background(Color.White.copy(alpha = 0.12f), CircleShape),
-            ) {
-                Icon(
-                    if (isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
-                    contentDescription = if (isMuted) "Unmute" else "Mute",
-                    tint = Color.White,
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                IconButton(
+                    onClick = onMuteToggle,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(Color.White.copy(alpha = 0.12f), CircleShape),
+                ) {
+                    Icon(
+                        if (isMuted) Icons.Filled.MicOff else Icons.Filled.Mic,
+                        contentDescription = if (isMuted) "Unmute" else "Mute",
+                        tint = Color.White,
+                    )
+                }
+                // Continuous screen view: while on, every turn carries a fresh
+                // screenshot so Jarvis can answer about what you're looking at.
+                IconButton(
+                    onClick = onScreenViewToggle,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(
+                            if (screenViewEnabled) orbColor.copy(alpha = 0.3f)
+                            else Color.White.copy(alpha = 0.12f),
+                            CircleShape,
+                        ),
+                ) {
+                    Icon(
+                        if (screenViewEnabled) Icons.Filled.ScreenShare else Icons.Filled.StopScreenShare,
+                        contentDescription = if (screenViewEnabled) "Stop watching screen" else "Let Jarvis watch the screen",
+                        tint = Color.White,
+                    )
+                }
             }
 
             Spacer(Modifier.height(16.dp))

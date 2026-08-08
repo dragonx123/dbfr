@@ -44,6 +44,20 @@ class CloudApiChatBackend(
     /** role is "user" or "assistant"; the system prompt is sent separately per provider. */
     private val history = mutableListOf<Pair<String, String>>()
 
+    /**
+     * Base64 JPEG to attach to the *next* request only. Images are dropped
+     * from history afterwards — re-uploading every past screenshot on every
+     * turn would balloon token cost for no benefit.
+     */
+    private var pendingImage: String? = null
+
+    override val supportsImages: Boolean get() = true
+
+    override fun sendMessageWithImageStream(userText: String, base64Jpeg: String): Flow<String> {
+        pendingImage = base64Jpeg
+        return sendMessageStream(userText)
+    }
+
     override suspend fun initialize() {
         if (apiKey.isBlank()) throw IOException("No API key set — add one in Settings.")
         if (model.isBlank()) throw IOException("No model set — pick one in Settings.")
@@ -55,7 +69,9 @@ class CloudApiChatBackend(
         AppLogger.i(TAG, "sendMessage via $provider: \"${userText.take(80)}\"")
         history += "user" to userText
 
-        val request = buildRequest()
+        val image = pendingImage
+        pendingImage = null
+        val request = buildRequest(image)
         val assistantText = StringBuilder()
 
         client.newCall(request).execute().use { resp ->
@@ -86,12 +102,25 @@ class CloudApiChatBackend(
         AppLogger.i(TAG, "Generation complete (${assistantText.length} chars)")
     }.flowOn(Dispatchers.IO)
 
-    private fun buildRequest(): Request = when (provider) {
+    private fun buildRequest(image: String?): Request = when (provider) {
         CloudProvider.OPENAI_COMPAT -> {
             val messages = JSONArray().apply {
                 put(JSONObject().put("role", "system").put("content", systemInstruction))
-                history.forEach { (role, text) ->
-                    put(JSONObject().put("role", role).put("content", text))
+                history.forEachIndexed { index, (role, text) ->
+                    val isLast = index == history.lastIndex
+                    if (isLast && image != null && role == "user") {
+                        val parts = JSONArray()
+                            .put(JSONObject().put("type", "text").put("text", text))
+                            .put(
+                                JSONObject().put("type", "image_url").put(
+                                    "image_url",
+                                    JSONObject().put("url", "data:image/jpeg;base64,$image")
+                                )
+                            )
+                        put(JSONObject().put("role", role).put("content", parts))
+                    } else {
+                        put(JSONObject().put("role", role).put("content", text))
+                    }
                 }
             }
             val body = JSONObject()
@@ -107,8 +136,24 @@ class CloudApiChatBackend(
 
         CloudProvider.ANTHROPIC -> {
             val messages = JSONArray().apply {
-                history.forEach { (role, text) ->
-                    put(JSONObject().put("role", role).put("content", text))
+                history.forEachIndexed { index, (role, text) ->
+                    val isLast = index == history.lastIndex
+                    if (isLast && image != null && role == "user") {
+                        val blocks = JSONArray()
+                            .put(
+                                JSONObject().put("type", "image").put(
+                                    "source",
+                                    JSONObject()
+                                        .put("type", "base64")
+                                        .put("media_type", "image/jpeg")
+                                        .put("data", image)
+                                )
+                            )
+                            .put(JSONObject().put("type", "text").put("text", text))
+                        put(JSONObject().put("role", role).put("content", blocks))
+                    } else {
+                        put(JSONObject().put("role", role).put("content", text))
+                    }
                 }
             }
             val body = JSONObject()
@@ -127,11 +172,20 @@ class CloudApiChatBackend(
 
         CloudProvider.GEMINI -> {
             val contents = JSONArray().apply {
-                history.forEach { (role, text) ->
+                history.forEachIndexed { index, (role, text) ->
+                    val parts = JSONArray().put(JSONObject().put("text", text))
+                    if (index == history.lastIndex && image != null && role == "user") {
+                        parts.put(
+                            JSONObject().put(
+                                "inline_data",
+                                JSONObject().put("mime_type", "image/jpeg").put("data", image)
+                            )
+                        )
+                    }
                     put(
                         JSONObject()
                             .put("role", if (role == "assistant") "model" else "user")
-                            .put("parts", JSONArray().put(JSONObject().put("text", text)))
+                            .put("parts", parts)
                     )
                 }
             }

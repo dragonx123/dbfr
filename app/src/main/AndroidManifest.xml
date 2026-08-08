@@ -20,6 +20,7 @@
     <!-- Optional: lets the wake-word listener keep running while the screen is off -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature android:name="android.hardware.microphone" android:required="true" />
@@ -65,6 +66,21 @@
             android:name=".voice.VoiceSessionService"
             android:foregroundServiceType="microphone"
             android:exported="false" />
+
+        <!-- Optional, user-enabled in Android's Accessibility settings: lets Jarvis
+             read the current screen and operate it (back/home, scroll, tap by label). -->
+        <service
+            android:name=".control.JarvisAccessibilityService"
+            android:exported="false"
+            android:label="Jarvis screen control"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
 
     </application>
 

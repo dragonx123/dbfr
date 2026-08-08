@@ -15,9 +15,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import com.jarvis.assistant.control.JarvisAccessibilityService
+import com.jarvis.assistant.control.ScreenCaptureManager
 import com.jarvis.assistant.ui.ChatScreen
 import com.jarvis.assistant.ui.ChatViewModel
 import com.jarvis.assistant.ui.CrashReportDialog
+import com.jarvis.assistant.ui.InstructionsScreen
 import com.jarvis.assistant.ui.LogsScreen
 import com.jarvis.assistant.ui.SettingsScreen
 import com.jarvis.assistant.ui.VoiceModeScreen
@@ -26,7 +29,7 @@ import com.jarvis.assistant.ui.theme.JarvisTheme
 import com.jarvis.assistant.util.AppLogger
 import com.jarvis.assistant.util.CrashReporter
 
-private enum class Screen { CHAT, SETTINGS, VOICE_MODE, LOGS }
+private enum class Screen { CHAT, SETTINGS, VOICE_MODE, LOGS, INSTRUCTIONS }
 
 class MainActivity : ComponentActivity() {
 
@@ -39,6 +42,25 @@ class MainActivity : ComponentActivity() {
     private val pickModelFile = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let(viewModel::importModel) }
+
+    /** What the user typed before being asked for screen-capture consent. */
+    private var pendingScreenQuestion: String? = null
+
+    /** Set when consent was requested in order to turn on continuous watching. */
+    private var pendingEnableScreenWatch = false
+
+    private val requestScreenCapture = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        ScreenCaptureManager.onConsentResult(result.resultCode, result.data)
+        val question = pendingScreenQuestion
+        val enableWatch = pendingEnableScreenWatch
+        pendingScreenQuestion = null
+        pendingEnableScreenWatch = false
+        if (!ScreenCaptureManager.hasConsent) return@registerForActivityResult
+        if (question != null) viewModel.sendWithScreenshot(question)
+        if (enableWatch) viewModel.setContinuousScreenView(true)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,8 +100,31 @@ class MainActivity : ComponentActivity() {
                         onSave = viewModel::updateSettings,
                         onPreviewVoice = viewModel::previewVoice,
                         onOpenLogs = { screen = Screen.LOGS },
+                        onOpenInstructions = {
+                            viewModel.refreshLearnedFacts()
+                            screen = Screen.INSTRUCTIONS
+                        },
+                        onOpenAccessibilitySettings = {
+                            runCatching {
+                                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                            }
+                        },
+                        screenControlEnabled = JarvisAccessibilityService.isEnabled,
                         onBack = { screen = Screen.CHAT },
                     )
+
+                    Screen.INSTRUCTIONS -> {
+                        val instructions by viewModel.customInstructions.collectAsState()
+                        val facts by viewModel.learnedFacts.collectAsState()
+                        InstructionsScreen(
+                            initialInstructions = instructions,
+                            facts = facts,
+                            onSave = viewModel::saveCustomInstructions,
+                            onDeleteFact = viewModel::deleteLearnedFact,
+                            onClearFacts = viewModel::clearLearnedFacts,
+                            onBack = { screen = Screen.SETTINGS },
+                        )
+                    }
 
                     Screen.LOGS -> {
                         val logEntries by AppLogger.entries.collectAsState()
@@ -98,6 +143,7 @@ class MainActivity : ComponentActivity() {
                         val replyText by viewModel.voiceModeReplyText.collectAsState()
                         val isMuted by viewModel.isVoiceModeMuted.collectAsState()
                         val voiceError by viewModel.voiceModeError.collectAsState()
+                        val screenViewOn by viewModel.continuousScreenView.collectAsState()
 
                         VoiceModeScreen(
                             personaName = persona.displayName,
@@ -108,6 +154,20 @@ class MainActivity : ComponentActivity() {
                             latestReplyText = replyText,
                             isMuted = isMuted,
                             errorMessage = voiceError,
+                            screenViewEnabled = screenViewOn,
+                            onScreenViewToggle = {
+                                if (screenViewOn) {
+                                    viewModel.setContinuousScreenView(false)
+                                } else if (ScreenCaptureManager.hasConsent) {
+                                    viewModel.setContinuousScreenView(true)
+                                } else {
+                                    // Consent first; the toggle flips on once granted.
+                                    pendingEnableScreenWatch = true
+                                    requestScreenCapture.launch(
+                                        ScreenCaptureManager.createConsentIntent(this@MainActivity)
+                                    )
+                                }
+                            },
                             onMuteToggle = viewModel::toggleVoiceModeMute,
                             onClose = {
                                 viewModel.exitVoiceMode()
@@ -137,6 +197,18 @@ class MainActivity : ComponentActivity() {
                         },
                         onPickModel = { pickModelFile.launch(arrayOf("*/*")) },
                         onOpenSettings = { screen = Screen.SETTINGS },
+                        onSendWithScreen = { question ->
+                            if (ScreenCaptureManager.hasConsent) {
+                                viewModel.sendWithScreenshot(question)
+                            } else {
+                                // First use needs Android's screen-capture consent
+                                // dialog; the question is replayed once granted.
+                                pendingScreenQuestion = question
+                                requestScreenCapture.launch(
+                                    ScreenCaptureManager.createConsentIntent(this@MainActivity)
+                                )
+                            }
+                        },
                         onOpenVoiceMode = {
                             requestRuntimePermissions()
                             viewModel.enterVoiceMode()
