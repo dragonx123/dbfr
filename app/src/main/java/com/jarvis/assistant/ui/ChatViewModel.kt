@@ -18,7 +18,10 @@ import com.jarvis.assistant.voice.SpeechToText
 import com.jarvis.assistant.voice.TextToSpeechManager
 import com.jarvis.assistant.voice.WakeWordEvents
 import com.jarvis.assistant.voice.WakeWordService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -27,8 +30,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.timeout
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
+import kotlin.time.Duration.Companion.seconds
 
 sealed interface ModelState {
     data object NotSetUp : ModelState
@@ -346,9 +352,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @OptIn(FlowPreview::class)
     fun sendMessage(text: String) {
         val activeBackend = backend
-        if (text.isBlank() || activeBackend == null || _modelState.value !is ModelState.Ready) return
+        // Also refuse a new message while one is still generating: sendMessage
+        // used to launch an independent coroutine per call with no guard, so
+        // if a reply ever stalled (see the idle timeout below for why that can
+        // happen), every message the user sent afterwards silently piled up
+        // as its own overlapping request against the same Conversation
+        // instead of surfacing the stall - which read as Jarvis going
+        // permanently silent, stuck on a "..." bubble forever.
+        if (text.isBlank() || activeBackend == null ||
+            _modelState.value !is ModelState.Ready || _isGenerating.value
+        ) return
 
         postMessage(Sender.USER, text)
         val replyId = UUID.randomUUID().toString()
@@ -357,17 +373,33 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isGenerating.value = true
             val builder = StringBuilder()
+            var stalled = false
             runCatching {
-                activeBackend.sendMessageStream(text).collect { chunk ->
-                    builder.append(chunk)
-                    updateMessage(replyId, builder.toString(), isStreaming = true)
+                activeBackend.sendMessageStream(text)
+                    .timeout(GENERATION_IDLE_TIMEOUT)
+                    .collect { chunk ->
+                        builder.append(chunk)
+                        updateMessage(replyId, builder.toString(), isStreaming = true)
+                    }
+            }.onFailure { error ->
+                stalled = error is TimeoutCancellationException
+                val reason = if (stalled) {
+                    "Jarvis stopped responding. Reconnecting — try sending that again."
+                } else {
+                    "[Error: ${error.message}]"
                 }
-            }.onFailure {
-                builder.append("\n\n[Error: ${it.message}]")
+                builder.append(if (builder.isEmpty()) reason else "\n\n$reason")
             }
             _isGenerating.value = false
             updateMessage(replyId, builder.toString(), isStreaming = false)
             if (_ttsEnabled.value) tts.speak(builder.toString())
+            // A stall likely means the underlying engine/conversation (most
+            // plausible on-device, e.g. wedged mid tool-call) won't recover on
+            // its own — reconnect so the next message gets a fresh one rather
+            // than hanging again. Off the main dispatcher: initializeBackend()
+            // synchronously closes the old engine/conversation, and a wedged
+            // native call there shouldn't get a chance to freeze the UI too.
+            if (stalled) withContext(Dispatchers.IO) { initializeBackend() }
         }
     }
 
@@ -421,5 +453,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val VOICE_MODE_COOLDOWN_MS = 700L
         private const val MAX_CONSECUTIVE_VOICE_MODE_ERRORS = 3
+
+        // How long to wait for the *next* chunk before giving up on a reply.
+        // Some on-device generations can legitimately take a while (cold
+        // start, long answers), so this is an idle timeout - it resets on
+        // every chunk - not a hard cap on total response time.
+        private val GENERATION_IDLE_TIMEOUT = 45.seconds
     }
 }

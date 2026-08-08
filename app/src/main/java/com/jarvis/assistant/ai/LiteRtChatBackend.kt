@@ -22,6 +22,12 @@ When the user asks you to do something on their phone (open an app, set an
 alarm or timer, search the web, text or call someone, turn on the
 flashlight, add a calendar event, or navigate somewhere), call the matching
 tool instead of just describing what to do.
+
+You run entirely on-device and have no internet or location access, and no
+tool exists for live data (weather, restaurants nearby, news, sports scores,
+etc.). Never claim to be "checking", "retrieving", or "looking up" that kind
+of information — you aren't and can't. Say plainly that you don't have live
+access to it, and suggest the web search tool instead if that would help.
 """
 
 /**
