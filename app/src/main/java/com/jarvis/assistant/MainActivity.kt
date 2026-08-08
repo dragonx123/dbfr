@@ -1,6 +1,7 @@
 package com.jarvis.assistant
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -16,10 +17,12 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.jarvis.assistant.ui.ChatScreen
 import com.jarvis.assistant.ui.ChatViewModel
+import com.jarvis.assistant.ui.CrashReportDialog
 import com.jarvis.assistant.ui.SettingsScreen
 import com.jarvis.assistant.ui.VoiceModeScreen
 import com.jarvis.assistant.ui.orbColor
 import com.jarvis.assistant.ui.theme.JarvisTheme
+import com.jarvis.assistant.util.CrashReporter
 
 private enum class Screen { CHAT, SETTINGS, VOICE_MODE }
 
@@ -42,6 +45,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             JarvisTheme {
                 var screen by remember { mutableStateOf(Screen.CHAT) }
+                var crashLog by remember { mutableStateOf(CrashReporter.readLastCrash(this@MainActivity)) }
 
                 val modelState by viewModel.modelState.collectAsState()
                 val backendType by viewModel.backendType.collectAsState()
@@ -114,6 +118,23 @@ class MainActivity : ComponentActivity() {
                             requestRuntimePermissions()
                             viewModel.enterVoiceMode()
                             screen = Screen.VOICE_MODE
+                        },
+                    )
+                }
+
+                crashLog?.let { text ->
+                    CrashReportDialog(
+                        crashText = text,
+                        onShare = { shareText ->
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, shareText)
+                            }
+                            startActivity(Intent.createChooser(sendIntent, "Share crash log"))
+                        },
+                        onDismiss = {
+                            CrashReporter.clearLastCrash(this@MainActivity)
+                            crashLog = null
                         },
                     )
                 }

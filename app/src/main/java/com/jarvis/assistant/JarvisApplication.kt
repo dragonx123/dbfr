@@ -4,11 +4,14 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import com.jarvis.assistant.util.CrashReporter
 
 class JarvisApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Installed first, before anything else gets a chance to crash.
+        CrashReporter.install(this)
         createWakeWordNotificationChannel()
     }
 
