@@ -666,7 +666,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // Relevant memories ride along with this turn rather than living
             // in the system prompt: the prompt is fixed when the backend
             // connects, but what's worth recalling changes every message.
-            var prompt = memoryStore.recallBlock(text) + pendingRecap + (promptOverride ?: text)
+            var prompt = nowBlock() + memoryStore.recallBlock(text) + pendingRecap +
+                (promptOverride ?: text)
             pendingRecap = ""
             var hops = 0
             var finalText = ""
@@ -797,6 +798,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * for UI questions is often the better answer anyway, since it returns
      * real labels instead of pixels.
      */
+    /**
+     * The real date and time, handed to the model on every turn.
+     *
+     * There is a getCurrentDateTime tool, but a small on-device model asked
+     * "what time is it" answered "6:15 AM tomorrow" without ever calling it.
+     * Anything a weak model can invent instead of looking up should simply
+     * be given to it — this costs a few tokens and removes a whole class of
+     * confident wrong answers, including relative ones ("tonight", "how long
+     * until…") that were silently wrong before.
+     */
+    private fun nowBlock(): String {
+        val now = java.util.Date()
+        val context = getApplication<Application>()
+        val date = android.text.format.DateFormat.getLongDateFormat(context).format(now)
+        val time = android.text.format.DateFormat.getTimeFormat(context).format(now)
+        return "[Right now it is $time on $date. Use this for anything time-related; " +
+            "never guess the date or time.]\n"
+    }
+
     /**
      * Frames real screen text for the model. The explicit "don't invent"
      * clause is load-bearing: small on-device models will happily narrate a
