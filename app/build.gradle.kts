@@ -76,7 +76,17 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // -- Coroutines --
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // Pinned high (not just left to transitive resolution): litertlm-android's
+    // compiled bytecode calls kotlinx.coroutines APIs from a newer coroutines
+    // release than 1.8.1. With 1.8.1 declared here, Gradle resolved the whole
+    // graph down to it, and litertlm crashed at runtime with
+    // NoSuchMethodError: SendChannel.close$default(...) the moment a
+    // Conversation's response stream finished (see Conversation.kt:452,
+    // ~2s after Jarvis's reply completes). Forcing the newest stable
+    // coroutines here makes the resolved version the highest in the graph
+    // again, matching what litertlm-android actually needs.
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
