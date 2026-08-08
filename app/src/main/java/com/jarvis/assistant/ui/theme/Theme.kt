@@ -17,6 +17,8 @@ private val JarvisDarkColors = darkColorScheme(
     onSurface = JarvisOnBackground,
     surfaceVariant = JarvisSurfaceVariant,
     onSurfaceVariant = JarvisOnSurfaceMuted,
+    outline = JarvisOutline,
+    outlineVariant = JarvisOutline,
     error = JarvisError,
 )
 
@@ -30,6 +32,8 @@ private val JarvisLightColors = lightColorScheme(
     onSurface = Color.Black,
     surfaceVariant = Color(0xFFE3E8EB),
     onSurfaceVariant = Color(0xFF44515A),
+    outline = Color(0xFFC7D0D4),
+    outlineVariant = Color(0xFFC7D0D4),
     error = JarvisError,
 )
 

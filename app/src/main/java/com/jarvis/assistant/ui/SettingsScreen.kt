@@ -1,5 +1,6 @@
 package com.jarvis.assistant.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,11 +14,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +40,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.jarvis.assistant.ai.OllamaChatBackend
 import com.jarvis.assistant.model.BackendType
@@ -53,6 +60,7 @@ fun SettingsScreen(
     currentPersona: Persona,
     onSave: (BackendType, String, String, Persona) -> Unit,
     onPreviewVoice: (Persona) -> Unit,
+    onOpenLogs: () -> Unit,
     onBack: () -> Unit,
 ) {
     var selectedType by remember { mutableStateOf(currentBackendType) }
@@ -67,14 +75,17 @@ fun SettingsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-            )
+            Column {
+                TopAppBar(
+                    title = { Text("Settings") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline, thickness = 1.dp)
+            }
         },
     ) { padding ->
         Column(
@@ -195,6 +206,39 @@ fun SettingsScreen(
             ) {
                 Text("Save")
             }
+
+            Spacer(Modifier.height(24.dp))
+            Text("Diagnostics", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "See what Jarvis has been doing under the hood — backend connections, " +
+                    "tool calls, speech/TTS state, and any errors — useful for troubleshooting " +
+                    "without needing a computer plugged in.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            Card(
+                onClick = onOpenLogs,
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Filled.Terminal, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("View logs", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
@@ -206,7 +250,13 @@ private fun PersonaOption(
     onSelect: () -> Unit,
     onPreview: () -> Unit,
 ) {
-    Card(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
+    Card(
+        onClick = onSelect,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(12.dp),
+    ) {
         Row(
             modifier = Modifier.padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -233,7 +283,8 @@ private fun PersonaOption(
 @Composable
 private fun GenderBadge(gender: VoiceGender) {
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         shape = RoundedCornerShape(6.dp),
     ) {
         Text(
@@ -252,7 +303,13 @@ private fun BackendOption(
     selected: Boolean,
     onSelect: () -> Unit,
 ) {
-    Card(onClick = onSelect, modifier = Modifier.fillMaxWidth()) {
+    Card(
+        onClick = onSelect,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(12.dp),
+    ) {
         Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             RadioButton(selected = selected, onClick = onSelect)
             Column {

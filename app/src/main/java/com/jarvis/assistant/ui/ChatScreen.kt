@@ -1,5 +1,6 @@
 package com.jarvis.assistant.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -72,39 +74,44 @@ fun ChatScreen(
 ) {
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(personaName) },
-                actions = {
-                    if (modelState is ModelState.Ready) {
-                        IconButton(onClick = onOpenVoiceMode) {
+            Column {
+                TopAppBar(
+                    title = { Text(personaName) },
+                    actions = {
+                        if (modelState is ModelState.Ready) {
+                            IconButton(onClick = onOpenVoiceMode) {
+                                Icon(
+                                    Icons.Filled.GraphicEq,
+                                    contentDescription = "Open voice mode",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                        IconButton(onClick = { onToggleWakeWord(!wakeWordEnabled) }) {
                             Icon(
-                                Icons.Filled.GraphicEq,
-                                contentDescription = "Open voice mode",
-                                tint = MaterialTheme.colorScheme.primary,
+                                Icons.Filled.SettingsVoice,
+                                contentDescription = "Toggle wake word listening",
+                                tint = if (wakeWordEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                    }
-                    IconButton(onClick = { onToggleWakeWord(!wakeWordEnabled) }) {
-                        Icon(
-                            Icons.Filled.SettingsVoice,
-                            contentDescription = "Toggle wake word listening",
-                            tint = if (wakeWordEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    IconButton(onClick = onToggleTts) {
-                        Icon(
-                            if (ttsEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
-                            contentDescription = "Toggle spoken replies",
-                        )
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
+                        IconButton(onClick = onToggleTts) {
+                            Icon(
+                                if (ttsEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                                contentDescription = "Toggle spoken replies",
+                            )
+                        }
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                    ),
+                )
+                // Thin HUD-panel edge instead of a hard Material shadow under the bar —
+                // matches the same cyan-tinted outline used on cards/bubbles below.
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline, thickness = 1.dp)
+            }
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -217,6 +224,8 @@ private fun MessageBubble(message: ChatMessage) {
     val bubbleColor = when {
         isUser -> MaterialTheme.colorScheme.primary
         isSystem -> Color.Transparent
+        // A dark HUD panel, not a lit-up grey box — the accent border below is
+        // what reads as "distinct from the background," not the fill color.
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
     val textColor = when {
@@ -228,7 +237,8 @@ private fun MessageBubble(message: ChatMessage) {
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {
         Surface(
             color = bubbleColor,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(if (isUser) 18.dp else 10.dp),
+            border = if (!isUser && !isSystem) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null,
             modifier = Modifier.padding(
                 start = if (isUser) 48.dp else 0.dp,
                 end = if (isUser) 0.dp else 48.dp,

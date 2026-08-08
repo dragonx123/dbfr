@@ -18,13 +18,15 @@ import androidx.core.content.ContextCompat
 import com.jarvis.assistant.ui.ChatScreen
 import com.jarvis.assistant.ui.ChatViewModel
 import com.jarvis.assistant.ui.CrashReportDialog
+import com.jarvis.assistant.ui.LogsScreen
 import com.jarvis.assistant.ui.SettingsScreen
 import com.jarvis.assistant.ui.VoiceModeScreen
 import com.jarvis.assistant.ui.orbColor
 import com.jarvis.assistant.ui.theme.JarvisTheme
+import com.jarvis.assistant.util.AppLogger
 import com.jarvis.assistant.util.CrashReporter
 
-private enum class Screen { CHAT, SETTINGS, VOICE_MODE }
+private enum class Screen { CHAT, SETTINGS, VOICE_MODE, LOGS }
 
 class MainActivity : ComponentActivity() {
 
@@ -66,8 +68,19 @@ class MainActivity : ComponentActivity() {
                         currentPersona = persona,
                         onSave = viewModel::updateSettings,
                         onPreviewVoice = viewModel::previewVoice,
+                        onOpenLogs = { screen = Screen.LOGS },
                         onBack = { screen = Screen.CHAT },
                     )
+
+                    Screen.LOGS -> {
+                        val logEntries by AppLogger.entries.collectAsState()
+                        LogsScreen(
+                            entries = logEntries,
+                            onShare = { text -> shareText(text, "Share logs") },
+                            onClear = AppLogger::clear,
+                            onBack = { screen = Screen.SETTINGS },
+                        )
+                    }
 
                     Screen.VOICE_MODE -> {
                         val orbPhase by viewModel.orbPhase.collectAsState()
@@ -125,13 +138,7 @@ class MainActivity : ComponentActivity() {
                 crashLog?.let { text ->
                     CrashReportDialog(
                         crashText = text,
-                        onShare = { shareText ->
-                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, shareText)
-                            }
-                            startActivity(Intent.createChooser(sendIntent, "Share crash log"))
-                        },
+                        onShare = { shareText(it, "Share crash log") },
                         onDismiss = {
                             CrashReporter.clearLastCrash(this@MainActivity)
                             crashLog = null
@@ -156,4 +163,12 @@ class MainActivity : ComponentActivity() {
 
     private fun hasPermission(permission: String) =
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun shareText(text: String, chooserTitle: String) {
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(sendIntent, chooserTitle))
+    }
 }

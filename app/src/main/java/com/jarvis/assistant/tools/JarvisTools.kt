@@ -12,7 +12,10 @@ import android.text.format.DateFormat
 import com.google.ai.edge.litertlm.Tool
 import com.google.ai.edge.litertlm.ToolParam
 import com.google.ai.edge.litertlm.ToolSet
+import com.jarvis.assistant.util.AppLogger
 import java.util.Date
+
+private const val TAG = "JarvisTools"
 
 /**
  * Device-control actions Jarvis can take. Each method is exposed to the
@@ -24,6 +27,10 @@ import java.util.Date
  * pre-filled (SMS composer, dialer) instead of sending/calling directly, so
  * a hallucinated tool call can never actually message or ring someone
  * without the user tapping "send"/"call" themselves.
+ *
+ * Every call is logged to [AppLogger] — the Settings > Logs screen is the
+ * easiest way to tell whether the model actually invoked a real tool for a
+ * request versus just describing/hallucinating one in plain text.
  */
 class JarvisTools(private val context: Context) : ToolSet {
 
@@ -31,6 +38,7 @@ class JarvisTools(private val context: Context) : ToolSet {
     fun openApp(
         @ToolParam(description = "The app's display name as it appears on the home screen.") appName: String
     ): String {
+        AppLogger.i(TAG, "openApp(appName=\"$appName\")")
         val pm = context.packageManager
         val launchables = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
@@ -57,6 +65,7 @@ class JarvisTools(private val context: Context) : ToolSet {
         @ToolParam(description = "Minute, 0-59.") minute: Int,
         @ToolParam(description = "Optional label for the alarm.") label: String? = null,
     ): String {
+        AppLogger.i(TAG, "setAlarm(hour=$hour, minute=$minute, label=$label)")
         val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
             putExtra(AlarmClock.EXTRA_HOUR, hour)
             putExtra(AlarmClock.EXTRA_MINUTES, minute)
@@ -74,6 +83,7 @@ class JarvisTools(private val context: Context) : ToolSet {
         @ToolParam(description = "Timer length in seconds.") seconds: Int,
         @ToolParam(description = "Optional label for the timer.") label: String? = null,
     ): String {
+        AppLogger.i(TAG, "setTimer(seconds=$seconds, label=$label)")
         val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
             putExtra(AlarmClock.EXTRA_LENGTH, seconds)
             label?.let { putExtra(AlarmClock.EXTRA_MESSAGE, it) }
@@ -90,6 +100,7 @@ class JarvisTools(private val context: Context) : ToolSet {
     fun searchWeb(
         @ToolParam(description = "What to search for.") query: String
     ): String {
+        AppLogger.i(TAG, "searchWeb(query=\"$query\")")
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query)))
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
@@ -101,6 +112,7 @@ class JarvisTools(private val context: Context) : ToolSet {
         @ToolParam(description = "Recipient phone number.") phoneNumber: String,
         @ToolParam(description = "Message body to pre-fill.") message: String,
     ): String {
+        AppLogger.i(TAG, "draftTextMessage(phoneNumber=$phoneNumber)")
         val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$phoneNumber")).apply {
             putExtra("sms_body", message)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -115,6 +127,7 @@ class JarvisTools(private val context: Context) : ToolSet {
     fun dialNumber(
         @ToolParam(description = "Phone number to dial.") phoneNumber: String
     ): String {
+        AppLogger.i(TAG, "dialNumber(phoneNumber=$phoneNumber)")
         val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phoneNumber")).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -128,6 +141,7 @@ class JarvisTools(private val context: Context) : ToolSet {
     fun setFlashlight(
         @ToolParam(description = "true to turn the flashlight on, false to turn it off.") on: Boolean
     ): String {
+        AppLogger.i(TAG, "setFlashlight(on=$on)")
         val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         return try {
             val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
@@ -137,6 +151,7 @@ class JarvisTools(private val context: Context) : ToolSet {
             cameraManager.setTorchMode(cameraId, on)
             if (on) "Flashlight on." else "Flashlight off."
         } catch (e: Exception) {
+            AppLogger.e(TAG, "setFlashlight failed", e)
             "I couldn't control the flashlight: ${e.message}"
         }
     }
@@ -146,6 +161,7 @@ class JarvisTools(private val context: Context) : ToolSet {
         @ToolParam(description = "Event title.") title: String,
         @ToolParam(description = "Optional free-text description, e.g. 'tomorrow at 3pm' — shown to the user, not parsed.") whenDescription: String? = null,
     ): String {
+        AppLogger.i(TAG, "draftCalendarEvent(title=\"$title\")")
         val intent = Intent(Intent.ACTION_INSERT, CalendarContract.Events.CONTENT_URI).apply {
             putExtra(CalendarContract.Events.TITLE, title)
             whenDescription?.let { putExtra(CalendarContract.Events.DESCRIPTION, it) }
@@ -161,6 +177,7 @@ class JarvisTools(private val context: Context) : ToolSet {
     fun navigateTo(
         @ToolParam(description = "Destination address or place name.") destination: String
     ): String {
+        AppLogger.i(TAG, "navigateTo(destination=\"$destination\")")
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=" + Uri.encode(destination))).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -179,6 +196,7 @@ class JarvisTools(private val context: Context) : ToolSet {
 
     @Tool(description = "Get the current date and time on the phone. Use this instead of guessing when the user asks what time or day it is.")
     fun getCurrentDateTime(): String {
+        AppLogger.i(TAG, "getCurrentDateTime()")
         val now = Date()
         val timeFormat = DateFormat.getTimeFormat(context)
         val dateFormat = DateFormat.getLongDateFormat(context)
@@ -187,6 +205,7 @@ class JarvisTools(private val context: Context) : ToolSet {
 
     @Tool(description = "Open the phone's system settings app.")
     fun openSettings(): String {
+        AppLogger.i(TAG, "openSettings()")
         val intent = Intent(android.provider.Settings.ACTION_SETTINGS).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }

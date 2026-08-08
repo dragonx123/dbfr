@@ -1,11 +1,14 @@
 package com.jarvis.assistant.ai
 
+import com.jarvis.assistant.util.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+
+private const val TAG = "OllamaChatBackend"
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -46,9 +49,11 @@ class OllamaChatBackend(
     override suspend fun initialize() {
         history.clear()
         history += message("system", personaSystemInstruction)
+        AppLogger.i(TAG, "Configured for $baseUrl (model=$model)")
     }
 
     override fun sendMessageStream(userText: String): Flow<String> = callbackFlow {
+        AppLogger.i(TAG, "sendMessage: \"${userText.take(80)}\"")
         history += message("user", userText)
 
         val requestJson = JSONObject().apply {
@@ -67,17 +72,21 @@ class OllamaChatBackend(
 
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
+                AppLogger.e(TAG, "Request failed", e)
                 close(IOException("Couldn't reach Ollama at $baseUrl: ${e.message}", e))
             }
 
             override fun onResponse(call: Call, response: Response) {
                 response.use { resp ->
                     if (!resp.isSuccessful) {
-                        close(IOException("Ollama returned HTTP ${resp.code}: ${resp.body?.string().orEmpty()}"))
+                        val body = resp.body?.string().orEmpty()
+                        AppLogger.e(TAG, "HTTP ${resp.code}: $body")
+                        close(IOException("Ollama returned HTTP ${resp.code}: $body"))
                         return
                     }
                     val source = resp.body?.source()
                     if (source == null) {
+                        AppLogger.e(TAG, "Empty response body")
                         close(IOException("Ollama returned an empty response body"))
                         return
                     }
@@ -98,8 +107,10 @@ class OllamaChatBackend(
                             if (json.optBoolean("done", false)) break
                         }
                         history += message("assistant", assistantText.toString())
+                        AppLogger.i(TAG, "Generation complete")
                         close()
                     } catch (e: Exception) {
+                        AppLogger.e(TAG, "Stream reading failed", e)
                         close(e)
                     }
                 }

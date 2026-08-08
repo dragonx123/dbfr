@@ -14,6 +14,7 @@ import com.jarvis.assistant.model.ChatMessage
 import com.jarvis.assistant.model.ModelRepository
 import com.jarvis.assistant.model.Persona
 import com.jarvis.assistant.model.Sender
+import com.jarvis.assistant.util.AppLogger
 import com.jarvis.assistant.voice.SpeechToText
 import com.jarvis.assistant.voice.TextToSpeechManager
 import com.jarvis.assistant.voice.WakeWordEvents
@@ -35,6 +36,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
+
+private const val TAG = "ChatViewModel"
 
 sealed interface ModelState {
     data object NotSetUp : ModelState
@@ -164,6 +167,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * (re)connects once. Called from the Settings screen's Save button.
      */
     fun updateSettings(type: BackendType, ollamaBaseUrl: String, ollamaModel: String, newPersona: Persona) {
+        AppLogger.i(TAG, "updateSettings: backend=$type persona=${newPersona.id}")
         backendSettings.backendType = type
         backendSettings.ollamaBaseUrl = ollamaBaseUrl
         backendSettings.ollamaModel = ollamaModel
@@ -275,6 +279,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 sendMessage(text)
             },
             onError = { message ->
+                AppLogger.w(TAG, "Voice mode speech error: $message")
                 _isListening.value = false
                 if (!_voiceModeActive.value || _voiceModeMuted.value) return@startListening
                 consecutiveVoiceModeErrors++
@@ -295,6 +300,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // -------------------------------------------------------------------------------
 
     private fun initializeBackend() {
+        AppLogger.i(TAG, "initializeBackend: ${backendSettings.backendType}")
         backend?.close()
         backend = null
 
@@ -334,8 +340,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 backend = newBackend
                 _modelState.value = ModelState.Ready
                 val name = backendSettings.persona.displayName
+                AppLogger.i(TAG, "Backend connected ($name)")
                 postMessage(Sender.SYSTEM, "$name is ready. Ask me anything, or tell me to do something on your phone.")
             }.onFailure {
+                AppLogger.e(TAG, "Backend connect failed", it)
                 _modelState.value = ModelState.Error(it.message ?: "Failed to connect")
             }
         }
@@ -347,8 +355,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val result = modelRepository.importModel(uri) { bytes ->
                 _modelState.value = ModelState.Importing(bytes)
             }
-            result.onSuccess { initializeBackend() }
-                .onFailure { _modelState.value = ModelState.Error(it.message ?: "Import failed") }
+            result.onSuccess {
+                AppLogger.i(TAG, "Model import complete")
+                initializeBackend()
+            }.onFailure {
+                AppLogger.e(TAG, "Model import failed", it)
+                _modelState.value = ModelState.Error(it.message ?: "Import failed")
+            }
         }
     }
 
@@ -399,7 +412,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // than hanging again. Off the main dispatcher: initializeBackend()
             // synchronously closes the old engine/conversation, and a wedged
             // native call there shouldn't get a chance to freeze the UI too.
-            if (stalled) withContext(Dispatchers.IO) { initializeBackend() }
+            if (stalled) {
+                AppLogger.w(TAG, "Generation stalled (${GENERATION_IDLE_TIMEOUT} idle) — reconnecting backend")
+                withContext(Dispatchers.IO) { initializeBackend() }
+            }
         }
     }
 
@@ -411,7 +427,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         speechToText.startListening(
             onListeningChanged = { _isListening.value = it },
             onFinalResult = { text -> sendMessage(text) },
-            onError = { message -> if (_isListening.value) postMessage(Sender.SYSTEM, message) },
+            onError = { message ->
+                AppLogger.w(TAG, "Speech error: $message")
+                if (_isListening.value) postMessage(Sender.SYSTEM, message)
+            },
         )
     }
 

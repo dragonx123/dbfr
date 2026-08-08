@@ -11,10 +11,15 @@ import com.google.ai.edge.litertlm.LogSeverity
 import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.tool
 import com.jarvis.assistant.tools.JarvisTools
+import com.jarvis.assistant.util.AppLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withContext
+
+private const val TAG = "LiteRtChatBackend"
 
 private const val TOOL_USE_INSTRUCTION = """
 
@@ -55,24 +60,31 @@ class LiteRtChatBackend(
     override suspend fun initialize() {
         withContext(Dispatchers.IO) {
             close()
+            AppLogger.i(TAG, "Loading model (backend=${if (useGpu) "GPU" else "CPU"}): $modelPath")
 
-            val engineConfig = EngineConfig(
-                modelPath = modelPath,
-                backend = if (useGpu) Backend.GPU() else Backend.CPU(),
-                cacheDir = cacheDir,
-            )
-            Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
-            val newEngine = Engine(engineConfig)
-            newEngine.initialize()
+            runCatching {
+                val engineConfig = EngineConfig(
+                    modelPath = modelPath,
+                    backend = if (useGpu) Backend.GPU() else Backend.CPU(),
+                    cacheDir = cacheDir,
+                )
+                Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
+                val newEngine = Engine(engineConfig)
+                newEngine.initialize()
 
-            val conversationConfig = ConversationConfig(
-                systemInstruction = Contents.of((personaSystemInstruction + TOOL_USE_INSTRUCTION).trim()),
-                samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
-                tools = listOf(tool(JarvisTools(appContext))),
-            )
+                val conversationConfig = ConversationConfig(
+                    systemInstruction = Contents.of((personaSystemInstruction + TOOL_USE_INSTRUCTION).trim()),
+                    samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
+                    tools = listOf(tool(JarvisTools(appContext))),
+                )
 
-            engine = newEngine
-            conversation = newEngine.createConversation(conversationConfig)
+                engine = newEngine
+                conversation = newEngine.createConversation(conversationConfig)
+            }.onSuccess {
+                AppLogger.i(TAG, "Model loaded, conversation ready")
+            }.onFailure {
+                AppLogger.e(TAG, "Model load failed", it)
+            }.getOrThrow()
         }
     }
 
@@ -83,10 +95,17 @@ class LiteRtChatBackend(
      */
     override fun sendMessageStream(userText: String): Flow<String> {
         val activeConversation = conversation ?: error("LiteRtChatBackend.initialize() must complete first")
-        return activeConversation.sendMessageAsync(userText).map { it.toString() }
+        return activeConversation.sendMessageAsync(userText)
+            .map { it.toString() }
+            .onStart { AppLogger.i(TAG, "sendMessage: \"${userText.take(80)}\"") }
+            .onCompletion { error ->
+                if (error != null) AppLogger.e(TAG, "Generation stopped early", error)
+                else AppLogger.i(TAG, "Generation complete")
+            }
     }
 
     override fun close() {
+        if (conversation != null || engine != null) AppLogger.i(TAG, "Closing engine/conversation")
         conversation?.close()
         conversation = null
         engine?.close()

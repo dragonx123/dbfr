@@ -5,8 +5,11 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import com.jarvis.assistant.model.VoiceGender
+import com.jarvis.assistant.util.AppLogger
 import java.util.Locale
 import java.util.UUID
+
+private const val TAG = "TextToSpeech"
 
 /** Speaks Jarvis's replies aloud using the on-device Android TTS engine. */
 class TextToSpeechManager(context: Context) {
@@ -32,9 +35,12 @@ class TextToSpeechManager(context: Context) {
         if (isReady) {
             tts.language = Locale.getDefault()
             defaultVoice = tts.voice
+            AppLogger.i(TAG, "Engine ready, default voice=${defaultVoice?.name}")
             pendingGender?.let { applyGender(it) }
             pendingText?.let { speak(it) }
             pendingText = null
+        } else {
+            AppLogger.e(TAG, "Engine init failed (status=$status)")
         }
     }
 
@@ -43,7 +49,10 @@ class TextToSpeechManager(context: Context) {
             override fun onStart(utteranceId: String?) = onSpeakingChanged(true)
             override fun onDone(utteranceId: String?) = onSpeakingChanged(false)
             @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String?) = onSpeakingChanged(false)
+            override fun onError(utteranceId: String?) {
+                AppLogger.e(TAG, "Utterance error")
+                onSpeakingChanged(false)
+            }
         })
     }
 
@@ -74,10 +83,12 @@ class TextToSpeechManager(context: Context) {
         }
         val matched = findVoiceForGender(gender)
         if (matched != null) {
+            AppLogger.i(TAG, "applyGender($gender): matched voice \"${matched.name}\"")
             tts.voice = matched
             tts.setPitch(1.0f)
             tts.setSpeechRate(1.0f)
         } else {
+            AppLogger.i(TAG, "applyGender($gender): no distinct voice found, using pitch/rate shift")
             tts.voice = defaultVoice
             if (gender == VoiceGender.FEMALE) {
                 tts.setPitch(1.25f)
