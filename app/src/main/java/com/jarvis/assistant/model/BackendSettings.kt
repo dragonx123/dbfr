@@ -75,6 +75,27 @@ class BackendSettings(context: Context) {
                 else "Removed a plaintext API key; re-enter it once encrypted storage works",
             )
         }
+
+        // Voices used to be chosen per gender rather than per persona. Seed
+        // each persona from whichever gender voice it would have used, so a
+        // user who already picked voices doesn't find them reset.
+        val legacyMale = prefs.getString(KEY_LEGACY_MALE_VOICE, null)
+        val legacyFemale = prefs.getString(KEY_LEGACY_FEMALE_VOICE, null)
+        if (!legacyMale.isNullOrBlank() || !legacyFemale.isNullOrBlank()) {
+            Personas.all.forEach { persona ->
+                if (voiceNameFor(persona.id).isNotBlank()) return@forEach
+                val inherited = when (persona.gender) {
+                    VoiceGender.MALE -> legacyMale
+                    VoiceGender.FEMALE -> legacyFemale
+                }
+                if (!inherited.isNullOrBlank()) setVoiceName(persona.id, inherited)
+            }
+            prefs.edit()
+                .remove(KEY_LEGACY_MALE_VOICE)
+                .remove(KEY_LEGACY_FEMALE_VOICE)
+                .apply()
+            AppLogger.i(TAG, "Migrated gender voice picks to per-persona voices")
+        }
     }
 
     var backendType: BackendType
@@ -126,18 +147,23 @@ class BackendSettings(context: Context) {
         set(value) = prefs.edit().putString(KEY_CLOUD_BASE_URL, value.trim().trimEnd('/')).apply()
 
     /**
-     * TTS voice the user picked for male/female personas, by
-     * [android.speech.tts.Voice.getName]. Blank means "let the app choose" —
-     * which on devices whose voice names carry no gender hint means pitch
-     * shifting does the work. See `TextToSpeechManager.applyPersona`.
+     * TTS voice the user picked for one persona, by
+     * [android.speech.tts.Voice.getName]. Blank means "let the app choose",
+     * which falls back to a gender-named voice and then to pitch shifting —
+     * see `TextToSpeechManager.applyPersona`.
      */
-    var maleVoiceName: String
-        get() = prefs.getString(KEY_MALE_VOICE, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_MALE_VOICE, value).apply()
+    fun voiceNameFor(personaId: String): String =
+        prefs.getString(KEY_VOICE_PREFIX + personaId, "") ?: ""
 
-    var femaleVoiceName: String
-        get() = prefs.getString(KEY_FEMALE_VOICE, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_FEMALE_VOICE, value).apply()
+    fun setVoiceName(personaId: String, voiceName: String) {
+        prefs.edit().putString(KEY_VOICE_PREFIX + personaId, voiceName).apply()
+    }
+
+    /** Every persona's chosen voice, for handing to the TTS layer in one go. */
+    fun allVoiceOverrides(): Map<String, String> =
+        Personas.all.mapNotNull { persona ->
+            voiceNameFor(persona.id).takeIf { it.isNotBlank() }?.let { persona.id to it }
+        }.toMap()
 
     /** Which [Persona] (name, voice gender, personality) is currently selected. */
     var persona: Persona
@@ -166,8 +192,11 @@ class BackendSettings(context: Context) {
         private const val KEY_CLOUD_MODEL = "cloud_model"
         private const val KEY_CLOUD_BASE_URL = "cloud_base_url"
         private const val KEY_PERSONA_ID = "persona_id"
-        private const val KEY_MALE_VOICE = "male_voice_name"
-        private const val KEY_FEMALE_VOICE = "female_voice_name"
+        private const val KEY_VOICE_PREFIX = "voice_"
+
+        // Pre-per-persona keys, drained by the migration in init.
+        private const val KEY_LEGACY_MALE_VOICE = "male_voice_name"
+        private const val KEY_LEGACY_FEMALE_VOICE = "female_voice_name"
 
         /** Sensible default model per provider, prefer cheap+fast+multimodal. */
         fun defaultModelFor(provider: CloudProvider): String = when (provider) {

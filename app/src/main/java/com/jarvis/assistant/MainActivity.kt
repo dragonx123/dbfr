@@ -89,8 +89,7 @@ class MainActivity : ComponentActivity() {
                 val cloudBaseUrl by viewModel.cloudBaseUrl.collectAsState()
                 val memories by viewModel.memories.collectAsState()
                 val availableVoices by viewModel.availableVoices.collectAsState()
-                val maleVoice by viewModel.maleVoiceName.collectAsState()
-                val femaleVoice by viewModel.femaleVoiceName.collectAsState()
+                val voiceOverrides by viewModel.voiceOverrides.collectAsState()
 
                 when (screen) {
                     Screen.SETTINGS -> SettingsScreen(
@@ -105,9 +104,8 @@ class MainActivity : ComponentActivity() {
                         onSave = viewModel::updateSettings,
                         onPreviewVoice = viewModel::previewVoice,
                         availableVoices = availableVoices,
-                        maleVoiceName = maleVoice,
-                        femaleVoiceName = femaleVoice,
-                        onChooseVoice = viewModel::chooseVoice,
+                        voiceOverrides = voiceOverrides,
+                        onChooseVoiceForPersona = viewModel::chooseVoiceForPersona,
                         secureStorageAvailable = viewModel.secureStorageAvailable,
                         onOpenLogs = { screen = Screen.LOGS },
                         onOpenInstructions = { screen = Screen.INSTRUCTIONS },

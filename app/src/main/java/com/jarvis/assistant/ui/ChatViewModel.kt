@@ -34,7 +34,6 @@ import com.jarvis.assistant.model.Persona
 import com.jarvis.assistant.model.Personas
 import com.jarvis.assistant.model.Sender
 import com.jarvis.assistant.model.UserInstructions
-import com.jarvis.assistant.model.VoiceGender
 import com.jarvis.assistant.util.AppLogger
 import com.jarvis.assistant.voice.SpeechToText
 import com.jarvis.assistant.voice.TextToSpeechManager
@@ -237,10 +236,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         tts.setOnReady { _availableVoices.value = tts.usableVoices().map { it.name } }
-        tts.setVoiceOverrides(
-            backendSettings.maleVoiceName.ifBlank { null },
-            backendSettings.femaleVoiceName.ifBlank { null },
-        )
+        tts.setVoiceOverrides(backendSettings.allVoiceOverrides())
         tts.applyPersona(backendSettings.persona)
         // One-time move of anything taught to the previous build, which kept
         // facts in SharedPreferences before MemoryStore existed.
@@ -313,31 +309,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _availableVoices = MutableStateFlow<List<String>>(emptyList())
     val availableVoices: StateFlow<List<String>> = _availableVoices.asStateFlow()
 
-    private val _maleVoiceName = MutableStateFlow(backendSettings.maleVoiceName)
-    val maleVoiceName: StateFlow<String> = _maleVoiceName.asStateFlow()
+    /** Persona id -> chosen voice name, for personas the user has assigned one. */
+    private val _voiceOverrides = MutableStateFlow(backendSettings.allVoiceOverrides())
+    val voiceOverrides: StateFlow<Map<String, String>> = _voiceOverrides.asStateFlow()
 
-    private val _femaleVoiceName = MutableStateFlow(backendSettings.femaleVoiceName)
-    val femaleVoiceName: StateFlow<String> = _femaleVoiceName.asStateFlow()
-
-    /** Saves an explicit voice choice and previews it straight away. */
-    fun chooseVoice(gender: VoiceGender, voiceName: String) {
-        when (gender) {
-            VoiceGender.MALE -> {
-                backendSettings.maleVoiceName = voiceName
-                _maleVoiceName.value = voiceName
-            }
-            VoiceGender.FEMALE -> {
-                backendSettings.femaleVoiceName = voiceName
-                _femaleVoiceName.value = voiceName
-            }
-        }
-        tts.setVoiceOverrides(
-            backendSettings.maleVoiceName.ifBlank { null },
-            backendSettings.femaleVoiceName.ifBlank { null },
-        )
-        val sample = Personas.all.firstOrNull { it.gender == gender } ?: Personas.JARVIS
-        tts.applyPersona(sample)
-        tts.speak(previewLine(sample))
+    /**
+     * Assigns [voiceName] to one persona and immediately speaks a sample in
+     * it, so picking from the list is an audible choice rather than a guess
+     * at what an opaque name like "en-us-x-iob-local" sounds like.
+     */
+    fun chooseVoiceForPersona(personaId: String, voiceName: String) {
+        backendSettings.setVoiceName(personaId, voiceName)
+        _voiceOverrides.value = backendSettings.allVoiceOverrides()
+        tts.setVoiceOverrides(_voiceOverrides.value)
+        previewVoice(Personas.byId(personaId))
     }
 
     private fun previewLine(p: Persona): String = when (p.id) {

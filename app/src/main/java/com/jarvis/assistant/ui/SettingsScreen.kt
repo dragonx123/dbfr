@@ -1,6 +1,8 @@
 package com.jarvis.assistant.ui
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -103,9 +105,8 @@ fun SettingsScreen(
     onSave: (BackendConfig) -> Unit,
     onPreviewVoice: (Persona) -> Unit,
     availableVoices: List<String>,
-    maleVoiceName: String,
-    femaleVoiceName: String,
-    onChooseVoice: (VoiceGender, String) -> Unit,
+    voiceOverrides: Map<String, String>,
+    onChooseVoiceForPersona: (String, String) -> Unit,
     secureStorageAvailable: Boolean,
     onOpenLogs: () -> Unit,
     onOpenInstructions: () -> Unit,
@@ -158,7 +159,15 @@ fun SettingsScreen(
             Text("Assistant voice", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Pick a name and voice for your assistant.",
+                if (availableVoices.size > 1) {
+                    "Pick a name and voice for your assistant. Each persona can use a " +
+                        "different one of your device's voices — tap \"Voice\" on a card to choose."
+                } else {
+                    "Pick a name and voice for your assistant. Your device only has one " +
+                        "speech voice installed, so the personas are told apart by pitch and " +
+                        "pace. Installing more voices in Android's text-to-speech settings " +
+                        "lets you give each its own."
+                },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -169,36 +178,11 @@ fun SettingsScreen(
                     selected = selectedPersona.id == persona.id,
                     onSelect = { selectedPersona = persona },
                     onPreview = { onPreviewVoice(persona) },
+                    availableVoices = availableVoices,
+                    chosenVoice = voiceOverrides[persona.id].orEmpty(),
+                    onChooseVoice = { voice -> onChooseVoiceForPersona(persona.id, voice) },
                 )
                 Spacer(Modifier.height(8.dp))
-            }
-
-            if (availableVoices.size > 1) {
-                Spacer(Modifier.height(20.dp))
-                Text("Which system voice to use", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Android doesn't say which of your installed voices are male or female — " +
-                        "the names are codes like \"en-us-x-iob-local\". Pick one for each here " +
-                        "and Jarvis will use it; tapping a voice plays a sample. Leave them " +
-                        "unset and pitch alone distinguishes the personas.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                VoicePickerRow(
-                    label = "Male personas (Jarvis, Vision, Ultron)",
-                    voices = availableVoices,
-                    selected = maleVoiceName,
-                    onPick = { onChooseVoice(VoiceGender.MALE, it) },
-                )
-                Spacer(Modifier.height(12.dp))
-                VoicePickerRow(
-                    label = "Female personas (Friday, Edith)",
-                    voices = availableVoices,
-                    selected = femaleVoiceName,
-                    onPick = { onChooseVoice(VoiceGender.FEMALE, it) },
-                )
             }
 
             Spacer(Modifier.height(16.dp))
@@ -491,7 +475,12 @@ private fun PersonaOption(
     selected: Boolean,
     onSelect: () -> Unit,
     onPreview: () -> Unit,
+    availableVoices: List<String>,
+    chosenVoice: String,
+    onChooseVoice: (String) -> Unit,
 ) {
+    var voicePickerOpen by remember { mutableStateOf(false) }
+
     Card(
         onClick = onSelect,
         modifier = Modifier.fillMaxWidth(),
@@ -499,53 +488,62 @@ private fun PersonaOption(
         border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
         shape = RoundedCornerShape(12.dp),
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            RadioButton(selected = selected, onClick = onSelect)
-            Column(modifier = Modifier.weight(1f)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(persona.displayName, style = MaterialTheme.typography.bodyLarge)
-                    GenderBadge(persona.gender)
+        Column(modifier = Modifier.padding(12.dp).animateContentSize()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                RadioButton(selected = selected, onClick = onSelect)
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(persona.displayName, style = MaterialTheme.typography.bodyLarge)
+                        GenderBadge(persona.gender)
+                    }
+                    Text(
+                        persona.tagline,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                Text(
-                    persona.tagline,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                IconButton(onClick = onPreview) {
+                    Icon(Icons.Filled.VolumeUp, contentDescription = "Preview ${persona.displayName}'s voice")
+                }
             }
-            IconButton(onClick = onPreview) {
-                Icon(Icons.Filled.VolumeUp, contentDescription = "Preview ${persona.displayName}'s voice")
+
+            // Only worth showing when there's an actual choice to make.
+            if (availableVoices.size > 1) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Voice: ${chosenVoice.ifBlank { "automatic" }.shortVoiceLabel()}" +
+                        if (voicePickerOpen) "" else "  ·  tap to change",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clickable { voicePickerOpen = !voicePickerOpen }
+                        .padding(vertical = 4.dp),
+                )
+                if (voicePickerOpen) {
+                    Spacer(Modifier.height(4.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(availableVoices) { voice ->
+                            ProviderChip(
+                                label = voice.shortVoiceLabel(),
+                                selected = voice == chosenVoice,
+                                onClick = { onChooseVoice(voice) },
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 /**
- * Horizontal list of the device's usable TTS voices. Names are opaque engine
- * codes, so they're shown verbatim and shortened only at the ends — guessing
- * a friendly label would be inventing information the system doesn't give us.
+ * Engine voice names are opaque codes ("en-us-x-iob-local"); trim the parts
+ * that are identical across every entry so the distinguishing bit is what
+ * the user actually reads. Anything invented beyond that would be a guess —
+ * Android exposes no friendly name.
  */
-@Composable
-private fun VoicePickerRow(
-    label: String,
-    voices: List<String>,
-    selected: String,
-    onPick: (String) -> Unit,
-) {
-    Text(label, style = MaterialTheme.typography.bodyLarge)
-    Spacer(Modifier.height(6.dp))
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(voices) { voice ->
-            ProviderChip(
-                label = voice.removePrefix("en-").removeSuffix("-local"),
-                selected = voice == selected,
-                onClick = { onPick(voice) },
-            )
-        }
-    }
-}
+private fun String.shortVoiceLabel(): String =
+    removePrefix("en-").removeSuffix("-local").removeSuffix("-network")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

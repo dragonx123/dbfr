@@ -28,9 +28,8 @@ class TextToSpeechManager(context: Context) {
     private var activePersona: Persona? = null
     private var usingMatchedVoice = false
 
-    /** Voice names the user explicitly picked in Settings, if any. */
-    private var maleVoiceName: String? = null
-    private var femaleVoiceName: String? = null
+    /** Persona id -> voice name, for personas the user explicitly assigned. */
+    private var voiceOverrides: Map<String, String> = emptyMap()
 
     /** ID of the final queued utterance of the current reply; see the progress listener. */
     private var lastUtteranceId: String? = null
@@ -126,7 +125,7 @@ class TextToSpeechManager(context: Context) {
             return
         }
         activePersona = persona
-        val matched = voiceForGender(persona.gender)
+        val matched = voiceFor(persona)
         usingMatchedVoice = matched != null
 
         val chosen = matched ?: defaultVoice
@@ -153,24 +152,26 @@ class TextToSpeechManager(context: Context) {
     private fun trySetVoice(voice: Voice): Boolean =
         runCatching { tts.setVoice(voice) == TextToSpeech.SUCCESS }.getOrDefault(false)
 
-    /** The user's explicit pick for a gender, if they've made one in Settings. */
-    private fun userChosenVoice(gender: VoiceGender): Voice? {
-        val wanted = when (gender) {
-            VoiceGender.MALE -> maleVoiceName
-            VoiceGender.FEMALE -> femaleVoiceName
+    /**
+     * The voice for [persona]: their own explicit pick if they have one,
+     * otherwise a voice whose name genuinely advertises the right gender,
+     * otherwise null so the caller falls back to the engine default.
+     */
+    private fun voiceFor(persona: Persona): Voice? {
+        val chosen = voiceOverrides[persona.id]
+        if (!chosen.isNullOrBlank()) {
+            usableVoices().firstOrNull { it.name == chosen }?.let { return it }
+            // The pick referenced a voice this device no longer has (uninstalled,
+            // or the settings came from another phone) — fall through rather
+            // than selecting nothing and going silent.
+            AppLogger.w(TAG, "Voice \"$chosen\" for ${persona.id} is gone; falling back")
         }
-        if (wanted.isNullOrBlank()) return null
-        return usableVoices().firstOrNull { it.name == wanted }
-    }
-
-    private fun voiceForGender(gender: VoiceGender): Voice? {
-        userChosenVoice(gender)?.let { return it }
 
         // Only trust a name that actually advertises a gender. Note "female"
         // contains "male", so the male branch has to exclude it explicitly.
         return usableVoices().firstOrNull { voice ->
             val name = voice.name.lowercase()
-            when (gender) {
+            when (persona.gender) {
                 VoiceGender.FEMALE -> name.contains("female")
                 VoiceGender.MALE -> name.contains("male") && !name.contains("female")
             }
@@ -198,10 +199,12 @@ class TextToSpeechManager(context: Context) {
         }.getOrDefault(emptyList())
     }
 
-    /** Persists nothing itself — callers pass the saved names in on startup and on change. */
-    fun setVoiceOverrides(maleVoice: String?, femaleVoice: String?) {
-        maleVoiceName = maleVoice
-        femaleVoiceName = femaleVoice
+    /**
+     * Persists nothing itself — callers pass the saved persona -> voice map
+     * in on startup and whenever it changes.
+     */
+    fun setVoiceOverrides(overrides: Map<String, String>) {
+        voiceOverrides = overrides
         activePersona?.let { applyPersona(it) }
     }
 
