@@ -9,7 +9,9 @@ import com.jarvis.assistant.ai.ChatBackend
 import com.jarvis.assistant.ai.CloudApiChatBackend
 import com.jarvis.assistant.ai.LiteRtChatBackend
 import com.jarvis.assistant.ai.OllamaChatBackend
+import com.jarvis.assistant.ai.SearchIntent
 import com.jarvis.assistant.ai.ToolDirective
+import com.jarvis.assistant.ai.WebResult
 import com.jarvis.assistant.ai.WebTools
 import com.jarvis.assistant.ai.parseToolDirective
 import com.jarvis.assistant.control.JarvisAccessibilityService
@@ -696,9 +698,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // Relevant memories ride along with this turn rather than living
             // in the system prompt: the prompt is fixed when the backend
             // connects, but what's worth recalling changes every message.
-            var prompt = nowBlock() + memoryStore.recallBlock(text) + pendingRecap +
-                (promptOverride ?: text)
+            val context = nowBlock() + memoryStore.recallBlock(text) + pendingRecap +
+                searchContextFor(text, replyId)
             pendingRecap = ""
+            var prompt = withContextFraming(context, promptOverride ?: text)
             var hops = 0
             var finalText = ""
             var stalled = false
@@ -833,6 +836,73 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * real labels instead of pixels.
      */
     /**
+     * Runs a web search up front when the user has plainly asked for one,
+     * returning the results as context (and showing them as a data panel).
+     *
+     * The model has a search tool, but a small on-device model answered
+     * "search up the moon" without ever calling it. When the instruction is
+     * this explicit there's nothing to infer — so the app does the search
+     * itself, on every backend, and hands over the results. Returns empty
+     * for ordinary messages, leaving the model's own tool use untouched.
+     */
+    private suspend fun searchContextFor(text: String, replyId: String): String {
+        val query = SearchIntent.queryFrom(text) ?: return ""
+        AppLogger.i(TAG, "Explicit search request detected: \"$query\"")
+        updateMessage(replyId, "Searching the web…", isStreaming = true)
+
+        val results = withContext(Dispatchers.IO) {
+            runCatching { WebTools.search(query) }
+                .onFailure { AppLogger.e(TAG, "Explicit search failed", it) }
+                .getOrNull()
+        } ?: return "[A web search for \"$query\" failed — no results are available. " +
+            "Tell the user you couldn't reach the web; do not invent results.]\n\n"
+
+        insertCardBefore(
+            replyId,
+            DataCard(
+                title = "WEB SEARCH — $query",
+                entries = results.map { DataCardEntry(it.title, it.snippet, it.url) },
+            ),
+        )
+        return webResultsBlock(query, results)
+    }
+
+    /** Shared rendering of search hits, used by the explicit path and the tool loop. */
+    private fun webResultsBlock(query: String, results: List<WebResult>): String = buildString {
+        appendLine("[Web search results for \"$query\" — these are real and current:]")
+        if (results.isEmpty()) appendLine("No results found.")
+        results.forEachIndexed { i, result ->
+            appendLine("${i + 1}. ${result.title}")
+            if (result.snippet.isNotBlank()) appendLine("   ${result.snippet}")
+            appendLine("   ${result.url}")
+        }
+        appendLine()
+    }
+
+    /**
+     * Joins background context to the live message so the two can't be
+     * confused for one another.
+     *
+     * This matters more than it looks. The recap block is a labelled
+     * transcript ("User: …" / "You: …"), and the live message used to be
+     * concatenated onto it bare. The last labelled line was therefore
+     * `You: <previous answer>`, and a small on-device model read the
+     * trailing unlabelled text as a continuation of that block rather than
+     * a new question — so it re-emitted its own previous reply verbatim.
+     * Closing the context and labelling the new turn removes the ambiguity.
+     *
+     * With no context at all the message is passed through untouched, so
+     * ordinary turns aren't padded with framing they don't need.
+     */
+    private fun withContextFraming(context: String, message: String): String {
+        if (context.isBlank()) return message
+        return context +
+            "[End of background. Answer the user's new message below. " +
+            "Do not repeat an earlier reply.]\n" +
+            "User: $message"
+    }
+
+    /**
      * The real date and time, handed to the model on every turn.
      *
      * There is a getCurrentDateTime tool, but a small on-device model asked
@@ -847,8 +917,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val context = getApplication<Application>()
         val date = android.text.format.DateFormat.getLongDateFormat(context).format(now)
         val time = android.text.format.DateFormat.getTimeFormat(context).format(now)
-        return "[Right now it is $time on $date. Use this for anything time-related; " +
-            "never guess the date or time.]\n"
+        // The spoken form is given explicitly because a small model read
+        // "4:11 PM" aloud as "four-one eleven pm".
+        return "[Right now it is $time — say that as \"${spokenTime(now)}\" — on $date. " +
+            "Use this for anything time-related; never guess the date or time.]\n"
+    }
+
+    /** "4:11 PM" as a human would say it: "four eleven PM". */
+    private fun spokenTime(now: java.util.Date): String {
+        val calendar = java.util.Calendar.getInstance().apply { time = now }
+        val hour24 = calendar.get(java.util.Calendar.HOUR_OF_DAY)
+        val hour = when {
+            hour24 == 0 -> 12
+            hour24 > 12 -> hour24 - 12
+            else -> hour24
+        }
+        val minute = calendar.get(java.util.Calendar.MINUTE)
+        val suffix = if (hour24 < 12) "AM" else "PM"
+        return when {
+            minute == 0 -> "$hour o'clock $suffix"
+            // "four oh five", not "four five"
+            minute < 10 -> "$hour oh $minute $suffix"
+            else -> "$hour $minute $suffix"
+        }
     }
 
     /**
@@ -958,18 +1049,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             title = "WEB SEARCH — $query",
                             entries = results.map { DataCardEntry(it.title, it.snippet, it.url) },
                         )
-                        val prompt = buildString {
-                            appendLine("[TOOL RESULT — web_search: \"$query\"]")
-                            if (results.isEmpty()) appendLine("No results found.")
-                            results.forEachIndexed { i, r ->
-                                appendLine("${i + 1}. ${r.title}\n   ${r.snippet}\n   ${r.url}")
-                            }
-                            append(
-                                "Using these results, answer the user's original question " +
-                                    "conversationally. Cite the source name inline where relevant. " +
-                                    "Only emit another tool directive if you truly need more data."
-                            )
-                        }
+                        val prompt = webResultsBlock(query, results) +
+                            "Using these results, answer the user's original question " +
+                            "conversationally. Cite the source name inline where relevant. " +
+                            "Only emit another tool directive if you truly need more data."
                         card to prompt
                     }
 

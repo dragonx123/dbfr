@@ -104,6 +104,10 @@ class ConversationStore(context: Context) {
                 val who = if (message.sender == Sender.USER) "User" else "You"
                 appendLine("$who: ${message.text.take(300)}")
             }
+            // Explicit terminator: without it the transcript ran straight into
+            // whatever followed, and the model treated the next line as another
+            // turn of this block rather than the live question.
+            appendLine("[End of earlier conversation.]")
             appendLine()
         }
     }
