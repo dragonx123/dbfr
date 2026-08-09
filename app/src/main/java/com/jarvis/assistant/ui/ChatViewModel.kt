@@ -683,7 +683,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // Relevant memories ride along with this turn rather than living
             // in the system prompt: the prompt is fixed when the backend
             // connects, but what's worth recalling changes every message.
-            val context = nowBlock() + memoryStore.recallBlock(text) + pendingRecap +
+            val context = nowBlock(text) + memoryStore.recallBlock(text) + pendingRecap +
                 searchContextFor(text, replyId)
             pendingRecap = ""
             var prompt = withContextFraming(context, promptOverride ?: text)
@@ -882,13 +882,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun withContextFraming(context: String, message: String): String {
         if (context.isBlank()) return message
         return context +
-            "[End of background. Answer the user's new message below. " +
-            "Do not repeat an earlier reply.]\n" +
+            "[The above is reference only — do not mention or quote it. " +
+            "Reply only to the user's new message below, addressing exactly " +
+            "what it says. Do not restate your previous reply.]\n" +
             "User: $message"
     }
 
     /**
-     * The real date and time, handed to the model on every turn.
+     * The real date and time, handed to the model when the message looks
+     * time-related — see [needsTimeContext].
      *
      * There is a getCurrentDateTime tool, but a small on-device model asked
      * "what time is it" answered "6:15 AM tomorrow" without ever calling it.
@@ -896,16 +898,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * be given to it — this costs a few tokens and removes a whole class of
      * confident wrong answers, including relative ones ("tonight", "how long
      * until…") that were silently wrong before.
+     *
+     * The wording matters. An earlier version read: Right now it is 7:30 PM
+     * — say that as "seven thirty PM" — on August 8. Read literally that is
+     * an instruction to say the time, and the model obeyed it on every turn:
+     * a question about Goku came back opening with the clock. The
+     * pronunciation hint is now conditional on the model choosing to state a
+     * time, and the block announces itself as reference, not as an order.
      */
-    private fun nowBlock(): String {
+    private fun nowBlock(text: String): String {
+        if (!needsTimeContext(text)) return ""
         val now = java.util.Date()
         val context = getApplication<Application>()
         val date = android.text.format.DateFormat.getLongDateFormat(context).format(now)
         val time = android.text.format.DateFormat.getTimeFormat(context).format(now)
-        // The spoken form is given explicitly because a small model read
-        // "4:11 PM" aloud as "four-one eleven pm".
-        return "[Right now it is $time — say that as \"${spokenTime(now)}\" — on $date. " +
-            "Use this for anything time-related; never guess the date or time.]\n"
+        return "[Reference — current date/time: $time on $date. " +
+            "Only mention this if the user asks about the time or date; " +
+            "if you do say the time aloud, say it as \"${spokenTime(now)}\". " +
+            "Never guess these.]\n"
+    }
+
+    /**
+     * Whether [text] plausibly turns on knowing the current date or time.
+     *
+     * The clock used to be injected on every turn, which both invited the
+     * model to recite it and filled its accumulated history with bracketed
+     * noise. Gating it costs the reference on a time-relevant message that
+     * uses none of these words — the same position the app was in before
+     * the block existed — and that is a fair trade against announcing the
+     * time in reply to "goku".
+     */
+    private fun needsTimeContext(text: String): Boolean {
+        val lower = text.lowercase()
+        return CLOCK_PATTERN.containsMatchIn(lower) || TIME_WORD_PATTERN.containsMatchIn(lower)
     }
 
     /** "4:11 PM" as a human would say it: "four eleven PM". */
@@ -1150,6 +1175,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         /** Max tool round-trips per user message before forcing a plain answer. */
         private const val MAX_TOOL_HOPS = 3
+
+        /** Words that make the current date/time relevant — see needsTimeContext. */
+        private val TIME_WORDS = listOf(
+            "time", "date", "clock", "today", "tonight", "tomorrow", "yesterday",
+            "now", "when", "day", "week", "weekend", "month", "year", "morning",
+            // Deliberately no bare "am"/"pm" — "what am I…" is not a time
+            // question; CLOCK_PATTERN covers "8 pm".
+            "afternoon", "evening", "night", "o'clock", "hour",
+            "minute", "schedule", "calendar", "appointment", "alarm", "timer",
+            "remind", "reminder", "deadline", "due", "how long", "until",
+            "ago", "later", "soon", "early", "late",
+        )
+
+        // Compiled once: needsTimeContext runs on every message, and building
+        // forty Regex objects per turn to answer one boolean would be silly.
+        private val TIME_WORD_PATTERN =
+            Regex(TIME_WORDS.joinToString("|") { """\b${Regex.escape(it)}\b""" })
+
+        /** A written clock reading: "8:30", "8 30", "8.30", "8pm", "8 am". */
+        private val CLOCK_PATTERN =
+            Regex("""\b\d{1,2}(?:\s*[:.]\s*\d{2}|\s+\d{2}|\s*[ap]m)\b""")
 
         /**
          * Appended to the persona system prompt for the Ollama and Cloud API
