@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Jarvis</string>
+    <string name="accessibility_service_description">Lets Jarvis read what\'s on your screen and operate it for you — pressing back or home, opening notifications, scrolling, and tapping buttons you name. Only used when you ask Jarvis to do something on screen.</string>
+</resources>

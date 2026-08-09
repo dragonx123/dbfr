@@ -1,0 +1,17 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.log
+
+# Model files are large binaries and are never committed to git.
+*.litertlm
+*.task
+*.tflite
+/app/src/main/assets/models/
