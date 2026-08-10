@@ -1,0 +1,47 @@
+# Builds a debug Android APK on every push, using a Docker image
+# (barichello/godot-ci) that already has the matching Godot editor,
+# Android export templates, and a debug signing keystore baked in — so
+# nothing needs installing on your own computer.
+#
+# After a run finishes: GitHub repo -> Actions tab -> pick the run ->
+# scroll to "Artifacts" -> download "idle-rpg-debug-apk" (a .zip
+# containing the .apk). Copy the .apk to your Android phone and open it
+# to install (you'll need to allow "install from unknown sources" once).
+#
+# NOTE: this workflow was written without a local Godot install to test
+# against (this dev environment doesn't have one) — if the first run
+# fails, that's expected to happen at least once; check the Actions log
+# and it'll get fixed from there.
+
+name: Build Android APK
+
+on:
+  push:
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.3"
+  EXPORT_NAME: "idle-rpg"
+
+jobs:
+  export-android:
+    name: Export Android (debug)
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create build output folder
+        run: mkdir -v -p build/android
+
+      - name: Export debug APK
+        run: godot --headless --verbose --export-debug "Android" build/android/${EXPORT_NAME}.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.EXPORT_NAME }}-debug-apk
+          path: build/android/*.apk
+          if-no-files-found: error

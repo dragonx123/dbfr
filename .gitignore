@@ -5,4 +5,7 @@
 # Godot-generated import/cache files
 *.translation
 export.cfg
-export_presets.cfg
+
+# Local export build output (the CI workflow writes APKs into build/, we
+# don't want to commit built binaries)
+/build/
