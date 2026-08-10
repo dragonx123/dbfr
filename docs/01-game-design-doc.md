@@ -54,8 +54,15 @@ from actual play.)*
 ## 5. Economy (Phase 1)
 
 - Single currency: **Gold**, earned from enemy kills (active) and offline accrual.
-- Spent on one upgrade screen (upgrades TBD in scope, but must map to the three
-  hero stats above).
+- Spent on one upgrade screen with three upgrades, one per hero stat (Attack,
+  Health, Attack Speed). Implemented as:
+  - Each upgrade adds a **flat** bonus per level to its stat (additive, not
+    multiplicative — avoids the uncapped multiplicative-stacking pitfall
+    CLAUDE.md flags).
+  - Upgrade cost grows geometrically per level already bought:
+    `cost = base_cost * 1.15^level`.
+  - Exact base costs and per-level bonus amounts are placeholder tuning
+    values in `GameState.gd` — expect to adjust after playtesting.
 - **Prestige currency**: separate, earned on prestige, spent on permanent
   multipliers. Exact prestige shop contents: TBD.
 

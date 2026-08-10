@@ -11,7 +11,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1")
 
-[node name="VBoxContainer" type="VBoxContainer" parent="."]
+[node name="GamePanel" type="VBoxContainer" parent="."]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -23,57 +23,132 @@ grow_vertical = 2
 custom_minimum_size = Vector2(280, 0)
 alignment = 1
 
-[node name="TitleLabel" type="Label" parent="VBoxContainer"]
+[node name="TitleLabel" type="Label" parent="GamePanel"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 32
 text = "Idle RPG"
 horizontal_alignment = 1
 
-[node name="StageLabel" type="Label" parent="VBoxContainer"]
+[node name="StageLabel" type="Label" parent="GamePanel"]
 layout_mode = 2
 text = "Stage: 1"
 horizontal_alignment = 1
 
-[node name="HeroNameLabel" type="Label" parent="VBoxContainer"]
+[node name="HeroNameLabel" type="Label" parent="GamePanel"]
 layout_mode = 2
 text = "Hero"
 horizontal_alignment = 1
 
-[node name="AttackLabel" type="Label" parent="VBoxContainer"]
+[node name="AttackLabel" type="Label" parent="GamePanel"]
 layout_mode = 2
 text = "Attack: 0"
 horizontal_alignment = 1
 
-[node name="AttackSpeedLabel" type="Label" parent="VBoxContainer"]
+[node name="AttackSpeedLabel" type="Label" parent="GamePanel"]
 layout_mode = 2
 text = "Attack Speed: 0 / sec"
 horizontal_alignment = 1
 
-[node name="GoldLabel" type="Label" parent="VBoxContainer"]
+[node name="GoldLabel" type="Label" parent="GamePanel"]
 layout_mode = 2
 text = "Gold: 0"
 horizontal_alignment = 1
 
-[node name="HeroHealthLabel" type="Label" parent="VBoxContainer"]
+[node name="HeroHealthLabel" type="Label" parent="GamePanel"]
 layout_mode = 2
 text = "Hero HP: 0 / 0"
 horizontal_alignment = 1
 
-[node name="HeroHealthBar" type="ProgressBar" parent="VBoxContainer"]
+[node name="HeroHealthBar" type="ProgressBar" parent="GamePanel"]
 layout_mode = 2
 custom_minimum_size = Vector2(0, 24)
 max_value = 1.0
 value = 1.0
 show_percentage = false
 
-[node name="EnemyHealthLabel" type="Label" parent="VBoxContainer"]
+[node name="EnemyHealthLabel" type="Label" parent="GamePanel"]
 layout_mode = 2
 text = "Enemy HP: 0 / 0"
 horizontal_alignment = 1
 
-[node name="EnemyHealthBar" type="ProgressBar" parent="VBoxContainer"]
+[node name="EnemyHealthBar" type="ProgressBar" parent="GamePanel"]
 layout_mode = 2
 custom_minimum_size = Vector2(0, 24)
 max_value = 1.0
 value = 1.0
 show_percentage = false
+
+[node name="TapButton" type="Button" parent="GamePanel"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 48)
+text = "Tap to Attack!"
+
+[node name="UpgradesButton" type="Button" parent="GamePanel"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 40)
+text = "Upgrades"
+
+[node name="UpgradePanel" type="VBoxContainer" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+grow_horizontal = 2
+grow_vertical = 2
+custom_minimum_size = Vector2(280, 0)
+alignment = 1
+
+[node name="TitleLabel" type="Label" parent="UpgradePanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Upgrades"
+horizontal_alignment = 1
+
+[node name="GoldLabel" type="Label" parent="UpgradePanel"]
+layout_mode = 2
+text = "Gold: 0"
+horizontal_alignment = 1
+
+[node name="AttackRow" type="HBoxContainer" parent="UpgradePanel"]
+layout_mode = 2
+
+[node name="AttackUpgradeLabel" type="Label" parent="UpgradePanel/AttackRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Attack: 5 (Lv 0)"
+
+[node name="AttackBuyButton" type="Button" parent="UpgradePanel/AttackRow"]
+layout_mode = 2
+text = "Buy (10 g)"
+
+[node name="HealthRow" type="HBoxContainer" parent="UpgradePanel"]
+layout_mode = 2
+
+[node name="HealthUpgradeLabel" type="Label" parent="UpgradePanel/HealthRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Health: 50 (Lv 0)"
+
+[node name="HealthBuyButton" type="Button" parent="UpgradePanel/HealthRow"]
+layout_mode = 2
+text = "Buy (10 g)"
+
+[node name="AttackSpeedRow" type="HBoxContainer" parent="UpgradePanel"]
+layout_mode = 2
+
+[node name="AttackSpeedUpgradeLabel" type="Label" parent="UpgradePanel/AttackSpeedRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Attack Speed: 1.00 / sec (Lv 0)"
+
+[node name="AttackSpeedBuyButton" type="Button" parent="UpgradePanel/AttackSpeedRow"]
+layout_mode = 2
+text = "Buy (20 g)"
+
+[node name="BackButton" type="Button" parent="UpgradePanel"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 40)
+text = "Back"
