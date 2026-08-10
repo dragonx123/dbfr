@@ -1,7 +1,7 @@
 # Builds a debug Android APK on every push, using a Docker image
 # (barichello/godot-ci) that already has the matching Godot editor,
-# Android export templates, and a debug signing keystore baked in — so
-# nothing needs installing on your own computer.
+# Android export templates, an Android SDK/Gradle, and a debug signing
+# keystore baked in — so nothing needs installing on your own computer.
 #
 # After a run finishes: GitHub repo -> Actions tab -> pick the run ->
 # scroll to "Artifacts" -> download "idle-rpg-debug-apk" (a .zip
@@ -9,9 +9,10 @@
 # to install (you'll need to allow "install from unknown sources" once).
 #
 # NOTE: this workflow was written without a local Godot install to test
-# against (this dev environment doesn't have one) — if the first run
-# fails, that's expected to happen at least once; check the Actions log
-# and it'll get fixed from there.
+# against (this dev environment doesn't have one). It took several
+# iterations to get right (see git log) -- the first few pushes each
+# failed for a different real reason found in the Actions logs and fixed
+# from there.
 
 name: Build Android APK
 
@@ -22,6 +23,11 @@ on:
 env:
   GODOT_VERSION: "4.3"
   EXPORT_NAME: "idle-rpg"
+  # The godot-ci image bakes export templates/keystore/SDK config under
+  # /root, but Actions' "container:" mode forces HOME to /github/home for
+  # every step by default, so Godot/the shell can't find any of it.
+  # Pointing HOME back at /root for the whole job fixes that.
+  HOME: /root
 
 jobs:
   export-android:
@@ -33,16 +39,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Android build template (required for Gradle build)
+        # We use Godot's Gradle export path (see export_presets.cfg for
+        # why), which needs a res://android/build folder containing the
+        # engine's Android project source. Normally you'd get this by
+        # clicking Project > Install Android Build Template in the
+        # editor; here we just unzip the same file the editor would use,
+        # straight from the image's bundled export templates.
+        run: |
+          mkdir -p android/build
+          unzip -o "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/android_source.zip" -d android/build
+
       - name: Create build output folder
         run: mkdir -v -p build/android
 
       - name: Export debug APK
-        env:
-          # The godot-ci image bakes export templates/keystore/SDK paths
-          # under /root, but Actions' "container:" mode forces HOME to
-          # /github/home for every step, so Godot can't find any of it.
-          # Pointing HOME back at /root (just for this step) fixes that.
-          HOME: /root
         run: godot --headless --verbose --export-debug "Android" build/android/${EXPORT_NAME}.apk
 
       - name: Upload APK artifact
