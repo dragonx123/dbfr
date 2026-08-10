@@ -37,6 +37,12 @@ jobs:
         run: mkdir -v -p build/android
 
       - name: Export debug APK
+        env:
+          # The godot-ci image bakes export templates/keystore/SDK paths
+          # under /root, but Actions' "container:" mode forces HOME to
+          # /github/home for every step, so Godot can't find any of it.
+          # Pointing HOME back at /root (just for this step) fixes that.
+          HOME: /root
         run: godot --headless --verbose --export-debug "Android" build/android/${EXPORT_NAME}.apk
 
       - name: Upload APK artifact
