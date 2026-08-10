@@ -29,6 +29,14 @@ var attack: int = 5
 var max_health: int = 50
 var attack_speed: float = 1.0  # attacks per second
 
-## --- Economy / progression (placeholders — not wired up yet) ---
+## --- Economy / progression ---
 var gold: int = 0
 var current_stage: int = 1
+
+## --- Combat state ---
+## The hero's CURRENT health during combat — separate from max_health above,
+## which is the ceiling. This goes down when the enemy lands a hit, and gets
+## reset to max_health when the hero "respawns" after dying (see Main.gd).
+## Float, not int, because damage amounts may end up fractional once stat
+## scaling/upgrades are added.
+var hero_current_health: float = float(max_health)
