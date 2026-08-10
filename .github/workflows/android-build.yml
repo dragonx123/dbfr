@@ -50,6 +50,14 @@ jobs:
           mkdir -p android/build
           unzip -o "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/android_source.zip" -d android/build
 
+      - name: Import project resources
+        # First-ever open of this checkout: there's no .godot/ import
+        # cache yet. Opening the editor headlessly once and quitting
+        # forces a full resource import before we ask it to export --
+        # a well-known Godot CI pattern for avoiding otherwise-unexplained
+        # export failures on a fresh checkout.
+        run: godot --headless --editor --quit
+
       - name: Create build output folder
         run: mkdir -v -p build/android
 
